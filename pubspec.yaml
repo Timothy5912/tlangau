@@ -1,0 +1,63 @@
+name: tlangau
+description: "A Flutter Group Messaging Application"
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Firebase
+  firebase_core: ^4.0.0
+  firebase_auth: ^6.0.0
+  cloud_firestore: ^6.0.0
+  firebase_storage: ^13.0.0
+  firebase_messaging: ^16.0.0
+
+  # State Management
+  provider: ^6.1.5
+
+  # Fonts
+  google_fonts: ^6.3.1
+
+  # Image Picker
+  image_picker: ^1.2.0
+
+  # Date & Time
+  intl: ^0.20.2
+
+  # Cached Images
+  cached_network_image: ^3.4.1
+
+  # Permissions
+  permission_handler: ^12.0.1
+
+  # Local Notifications
+  flutter_local_notifications: ^19.4.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - images/
+
+  # Custom Fonts (Optional)
+  # fonts:
+  #   - family: Poppins
+  #     fonts:
+  #       - asset: fonts/Poppins-Regular.ttf
+  #       - asset: fonts/Poppins-Bold.ttf
+  #         weight: 700
