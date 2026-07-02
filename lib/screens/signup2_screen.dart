@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import 'home_screen.dart';
+import 'profile_screen.dart';
 
 class CreatePasswordScreen extends StatefulWidget {
   final String phoneNumber;
@@ -95,7 +95,7 @@ class _CreatePasswordScreenState
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (_) => const HomeScreen(),
+          builder: (_) => ProfileScreen(phoneNumber: widget.phoneNumber),
         ),
         (route) => false,
       );
