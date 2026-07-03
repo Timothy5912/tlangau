@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'welcome_screen.dart';
+import 'profile_edit_screen.dart';
 
 class UserSettingScreen extends StatelessWidget {
   const UserSettingScreen({super.key});
@@ -13,9 +14,7 @@ class UserSettingScreen extends StatelessWidget {
 
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(
-        builder: (_) => const WelcomeScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const WelcomeScreen()),
       (route) => false,
     );
   }
@@ -36,11 +35,7 @@ class UserSettingScreen extends StatelessWidget {
 
           ListTile(
             leading: const CircleAvatar(
-              backgroundColor: Colors.black,
-              child: Icon(
-                Icons.person,
-                color: Colors.white,
-              ),
+              child: Icon(Icons.person),
             ),
             title: const Text(
               "Profile",
@@ -48,17 +43,19 @@ class UserSettingScreen extends StatelessWidget {
             ),
             subtitle: const Text("View and edit your profile"),
             onTap: () {
-              // We'll connect Profile page later.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProfileEditScreen(),
+                ),
+              );
             },
           ),
 
           const Divider(),
 
           ListTile(
-            leading: const Icon(
-              Icons.logout,
-              color: Colors.red,
-            ),
+            leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text(
               "Logout",
               style: TextStyle(

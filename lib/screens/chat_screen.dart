@@ -1,389 +1,977 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class ChatScreen extends StatefulWidget {
   final String groupId;
   final String groupName;
-  final String phoneNumber;
 
   const ChatScreen({
     super.key,
     required this.groupId,
     required this.groupName,
-    required this.phoneNumber,
   });
 
   @override
-  State<ChatScreen> createState() =>
-      _ChatScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState
-    extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> {
+  //====================================================
+  // Firebase
+  //====================================================
 
-  final FirebaseFirestore _firestore =
-      FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  final TextEditingController
-      _messageController =
+  //====================================================
+  // Controllers
+  //====================================================
+
+  final TextEditingController messageController =
       TextEditingController();
 
-  final ScrollController
-      _scrollController =
-      ScrollController();
+  Timer? typingTimer;
 
-  Future<Map<String, dynamic>>
-      getCurrentUser() async {
+  //====================================================
+  // Cache
+  //====================================================
 
-    final doc =
-        await _firestore
-            .collection("users")
-            .doc(widget.phoneNumber)
-            .get();
+  final Map<String, Map<String, dynamic>> _userCache = {};
 
-    return doc.data()!;
+  //====================================================
+  // Current User Phone
+  //====================================================
+
+  String get phoneNumber {
+    String phone = _auth.currentUser?.phoneNumber ?? "";
+
+    if (phone.startsWith("+91")) {
+      phone = phone.substring(3);
+    }
+
+    return phone;
   }
 
-  Future<void> sendMessage() async {
+  //====================================================
+  // Lifecycle
+  //====================================================
 
-    final text =
-        _messageController.text.trim();
+  @override
+  void initState() {
+    super.initState();
 
-    if (text.isEmpty) return;
+    setTyping(false);
+  }
 
-    final user =
-        await getCurrentUser();
+  @override
+  void dispose() {
+    typingTimer?.cancel();
+    setTyping(false);
+    messageController.dispose();
+    super.dispose();
+  }
 
-    final messageRef = _firestore
+  //====================================================
+  // Streams
+  //====================================================
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> getGroup() {
+    return _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getMessages() {
+    return _firestore
         .collection("groups")
         .doc(widget.groupId)
         .collection("messages")
-        .doc();
+        .orderBy(
+          "time",
+          descending: true,
+        )
+        .snapshots();
+  }
 
-    await messageRef.set({
+  //====================================================
+  // Load User Information
+  //====================================================
 
-      "message": text,
+  Future<Map<String, dynamic>> getUser(
+      String phone) async {
+    if (_userCache.containsKey(phone)) {
+      return _userCache[phone]!;
+    }
 
-      "senderName":
-          user["name"],
+    final doc = await _firestore
+        .collection("users")
+        .doc(phone)
+        .get();
 
-      "senderPhone":
-          widget.phoneNumber,
+    final data = doc.data() ?? {};
 
-      "senderImage":
-          user["profileImage"],
+    _userCache[phone] = data;
 
-      "timestamp":
-          FieldValue.serverTimestamp(),
+    return data;
+  }
+
+  //====================================================
+  // Typing Indicator
+  //====================================================
+
+  Future<void> setTyping(bool value) async {
+    try {
+      await _firestore
+          .collection("users")
+          .doc(phoneNumber)
+          .update({
+        "isTyping": value,
+        "typingIn": value ? widget.groupId : "",
+      });
+    } catch (_) {}
+  }
+
+  void onTyping(String value) {
+    setTyping(value.trim().isNotEmpty);
+
+    typingTimer?.cancel();
+
+    typingTimer = Timer(
+      const Duration(seconds: 2),
+      () {
+        setTyping(false);
+      },
+    );
+  }
+
+  //====================================================
+  // Send Message
+  //====================================================
+
+  Future<void> sendMessage() async {
+    final text = messageController.text.trim();
+
+    if (text.isEmpty) return;
+
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .collection("messages")
+        .add({
+      "text": text,
+      "sender": phoneNumber,
+      "time": FieldValue.serverTimestamp(),
     });
 
     await _firestore
         .collection("groups")
         .doc(widget.groupId)
         .update({
-
       "lastMessage": text,
-
       "lastMessageTime":
-          DateTime.now()
-              .toString()
-              .substring(11,16),
-
+          FieldValue.serverTimestamp(),
     });
 
-    _messageController.clear();
+    messageController.clear();
+
+    setTyping(false);
+
+    if (mounted) {
+      setState(() {});
+    }
   }
+
+  //====================================================
+  // Creator Functions
+  //====================================================
+
+  Future<void> removeMember(
+      String member) async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .update({
+      "members":
+          FieldValue.arrayRemove([member]),
+    });
+  }
+
+  Future<void> deleteGroup() async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .delete();
+
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+    //====================================================
+  // Member List
+  //====================================================
+
+  void openMemberList({
+    required List<String> members,
+    required bool isCreator,
+    required String creator,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: 12,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+
+                const Text(
+                  "Group Members",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 15),
+
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: members.length,
+                    itemBuilder: (context, index) {
+
+                      final phone = members[index];
+
+                      return FutureBuilder<
+                          Map<String, dynamic>>(
+                        future: getUser(phone),
+                        builder: (context, snapshot) {
+
+                          final user =
+                              snapshot.data ?? {};
+
+                          final username =
+                              user["username"] ??
+                              user["name"] ??
+                              phone;
+
+                          final profile =
+                              user["photoUrl"] ?? "";
+
+                          final bool creatorMember =
+                              phone == creator;
+
+                          return ListTile(
+
+                            leading: CircleAvatar(
+                              radius: 24,
+                              backgroundImage:
+                                  profile.isNotEmpty
+                                      ? NetworkImage(
+                                          profile,
+                                        )
+                                      : null,
+                              child: profile.isEmpty
+                                  ? const Icon(
+                                      Icons.person,
+                                    )
+                                  : null,
+                            ),
+
+                            title: Row(
+                              children: [
+
+                                Expanded(
+                                  child: Text(
+                                    username,
+                                    style:
+                                        const TextStyle(
+                                      fontWeight:
+                                          FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+
+                                if (creatorMember)
+                                  Container(
+                                    padding:
+                                        const EdgeInsets
+                                            .symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration:
+                                        BoxDecoration(
+                                      color:
+                                          Colors.green,
+                                      borderRadius:
+                                          BorderRadius
+                                              .circular(
+                                                  20),
+                                    ),
+                                    child: const Text(
+                                      "Creator",
+                                      style:
+                                          TextStyle(
+                                        color:
+                                            Colors.white,
+                                        fontSize: 11,
+                                        fontWeight:
+                                            FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+
+                            subtitle: Text(phone),
+
+                            trailing:
+                                isCreator &&
+                                        !creatorMember
+                                    ? IconButton(
+                                        icon:
+                                            const Icon(
+                                          Icons
+                                              .remove_circle,
+                                          color:
+                                              Colors.red,
+                                        ),
+                                        onPressed:
+                                            () async {
+
+                                          Navigator.pop(
+                                              context);
+
+                                          await removeMember(
+                                            phone,
+                                          );
+                                        },
+                                      )
+                                    : null,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Time Formatter
+  //====================================================
+
+  String formatTime(Timestamp? timestamp) {
+    if (timestamp == null) return "";
+
+    final dt = timestamp.toDate();
+
+    int hour = dt.hour;
+
+    String ampm = "AM";
+
+    if (hour >= 12) {
+      ampm = "PM";
+    }
+
+    hour = hour % 12;
+
+    if (hour == 0) {
+      hour = 12;
+    }
+
+    final minute = dt.minute
+        .toString()
+        .padLeft(2, '0');
+
+    return "$hour:$minute $ampm";
+  }
+    //====================================================
+  // BUILD
+  //====================================================
 
   @override
   Widget build(BuildContext context) {
+    return StreamBuilder<
+        DocumentSnapshot<Map<String, dynamic>>>(
+      stream: getGroup(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData ||
+            !snapshot.data!.exists) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
 
-    return Scaffold(
+        final group = snapshot.data!.data()!;
 
-      backgroundColor: Colors.white,
+        final List<String> members =
+            List<String>.from(
+          group["members"] ?? [],
+        );
 
-      appBar: AppBar(
+        final String creator =
+            group["createdBy"] ?? "";
 
-        backgroundColor: Colors.black,
+        final bool isCreator =
+            creator == phoneNumber;
 
-        title: Text(
-          widget.groupName,
-          style: const TextStyle(
-            color: Colors.white,
-          ),
-        ),
-      ),
-            body: Column(
-        children: [
+        return Scaffold(
+          backgroundColor: Colors.white,
 
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _firestore
-                  .collection("groups")
-                  .doc(widget.groupId)
-                  .collection("messages")
-                  .orderBy("timestamp")
-                  .snapshots(),
-              builder: (context, snapshot) {
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            titleSpacing: 0,
 
-                if (snapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(),
+            title: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+
+                Text(
+                  widget.groupName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+
+                StreamBuilder<QuerySnapshot>(
+                  stream: _firestore
+                      .collection("users")
+                      .where(
+                        "typingIn",
+                        isEqualTo:
+                            widget.groupId,
+                      )
+                      .where(
+                        "isTyping",
+                        isEqualTo: true,
+                      )
+                      .snapshots(),
+                  builder:
+                      (context, typingSnap) {
+
+                    if (!typingSnap.hasData) {
+                      return Text(
+                        "${members.length} members",
+                        style:
+                            const TextStyle(
+                          fontSize: 11,
+                        ),
+                      );
+                    }
+
+                    final docs =
+                        typingSnap.data!.docs;
+
+                    docs.removeWhere(
+                      (doc) =>
+                          doc.id ==
+                          phoneNumber,
+                    );
+
+                    if (docs.isEmpty) {
+                      return Text(
+                        "${members.length} members",
+                        style:
+                            const TextStyle(
+                          fontSize: 11,
+                        ),
+                      );
+                    }
+
+                    final user =
+                        docs.first.data()
+                            as Map<String,
+                                dynamic>;
+
+                    return Text(
+                      "${user["username"] ?? user["name"]} is typing...",
+                      style:
+                          const TextStyle(
+                        fontSize: 11,
+                        color: Colors.greenAccent,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+
+            actions: [
+
+              IconButton(
+                icon: const Icon(
+                  Icons.group,
+                ),
+                tooltip: "View Members",
+                onPressed: () {
+                  openMemberList(
+                    members: members,
+                    isCreator: isCreator,
+                    creator: creator,
                   );
-                }
+                },
+              ),
 
-                if (!snapshot.hasData ||
-                    snapshot.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      "No messages yet.\nStart the conversation!",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey,
+              if (isCreator)
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+
+                    if (value ==
+                        "manage") {
+                      openMemberList(
+                        members: members,
+                        isCreator: true,
+                        creator: creator,
+                      );
+                    }
+
+                    if (value ==
+                        "delete") {
+                      deleteGroup();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+
+                    PopupMenuItem(
+                      value: "manage",
+                      child: Text(
+                        "Manage Members",
                       ),
                     ),
-                  );
-                }
 
-                final messages = snapshot.data!.docs;
+                    PopupMenuItem(
+                      value: "delete",
+                      child: Text(
+                        "Delete Group",
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
 
-                WidgetsBinding.instance
-                    .addPostFrameCallback((_) {
+          body: Column(
+            children: [
 
-                  if (_scrollController.hasClients) {
-                    _scrollController.jumpTo(
-                      _scrollController
-                          .position
-                          .maxScrollExtent,
-                    );
-                  }
+              //====================================
+              // MESSAGE LIST
+              //====================================
 
-                });
+              Expanded(
+                child:
+                    StreamBuilder<QuerySnapshot<
+                        Map<String, dynamic>>>(
+                  stream: getMessages(),
+                  builder:
+                      (context, snapshot) {
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding:
-                      const EdgeInsets.all(12),
-                  itemCount: messages.length,
+                    if (!snapshot.hasData) {
+                      return const Center(
+                        child:
+                            CircularProgressIndicator(),
+                      );
+                    }
 
-                  itemBuilder: (context, index) {
+                    final messages =
+                        snapshot.data!.docs;
 
-                    final msg =
-                        messages[index];
-
-                    final data =
-                        msg.data()
-                            as Map<String, dynamic>;
-
-                    final bool isMe =
-                        data["senderPhone"] ==
-                            widget.phoneNumber;
-
-                    return Align(
-
-                      alignment: isMe
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-
-                      child: Container(
-
-                        margin:
-                            const EdgeInsets.only(
-                          bottom: 12,
-                        ),
-
-                        constraints:
-                            const BoxConstraints(
-                          maxWidth: 300,
-                        ),
-
-                        padding:
-                            const EdgeInsets.all(12),
-
-                        decoration: BoxDecoration(
-
-                          color: isMe
-                              ? Colors.black
-                              : Colors.grey.shade200,
-
-                          borderRadius:
-                              BorderRadius.circular(
-                            15,
+                    if (messages.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          "No messages yet.\nStart chatting 👋",
+                          textAlign:
+                              TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey,
                           ),
                         ),
+                      );
+                    }
 
-                        child: Column(
+                    return ListView.builder(
+                      reverse: true,
+                      padding:
+                          const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      itemCount:
+                          messages.length,
+                      itemBuilder:
+                          (context, index) {
+                                                    final msg = messages[index].data();
 
-                          crossAxisAlignment:
-                              CrossAxisAlignment
-                                  .start,
+                        final bool isMe =
+                            msg["sender"] == phoneNumber;
 
-                          children: [
+                        return FutureBuilder<
+                            Map<String, dynamic>>(
+                          future: getUser(
+                            msg["sender"],
+                          ),
+                          builder:
+                              (context, userSnap) {
 
-                            if (!isMe)
-                              Row(
+                            final user =
+                                userSnap.data ?? {};
+
+                            final username = isMe
+                                ? "You"
+                                : (user["username"] ??
+                                    user["name"] ??
+                                    "User");
+
+                            final profile =
+                                user["photoUrl"] ?? "";
+
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                vertical: 5,
+                              ),
+                              child: Row(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.end,
+                                mainAxisAlignment: isMe
+                                    ? MainAxisAlignment.end
+                                    : MainAxisAlignment.start,
                                 children: [
 
-                                  CircleAvatar(
-                                    radius: 15,
+                                  if (!isMe)
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundImage:
+                                          profile.isNotEmpty
+                                              ? NetworkImage(
+                                                  profile,
+                                                )
+                                              : null,
+                                      child:
+                                          profile.isEmpty
+                                              ? const Icon(
+                                                  Icons.person,
+                                                  size: 18,
+                                                )
+                                              : null,
+                                    ),
 
-                                    backgroundImage:
-                                        data["senderImage"] !=
-                                                    null &&
-                                                data["senderImage"] !=
-                                                    ""
-                                            ? NetworkImage(
-                                                data[
-                                                    "senderImage"],
-                                              )
-                                            : null,
+                                  if (!isMe)
+                                    const SizedBox(
+                                      width: 8,
+                                    ),
 
-                                    child:
-                                        data["senderImage"] ==
-                                                    null ||
-                                                data["senderImage"] ==
-                                                    ""
-                                            ? const Icon(
-                                                Icons.person,
-                                                size: 16,
-                                              )
-                                            : null,
-                                  ),
+                                  Flexible(
+                                    child: Container(
+                                      constraints:
+                                          const BoxConstraints(
+                                        maxWidth: 280,
+                                      ),
+                                      padding:
+                                          const EdgeInsets.all(
+                                              12),
+                                      decoration:
+                                          BoxDecoration(
+                                        color: isMe
+                                            ? Colors.black
+                                            : Colors.grey
+                                                .shade200,
+                                        borderRadius:
+                                            BorderRadius.only(
+                                          topLeft:
+                                              const Radius
+                                                  .circular(
+                                                  18),
+                                          topRight:
+                                              const Radius
+                                                  .circular(
+                                                  18),
+                                          bottomLeft:
+                                              Radius.circular(
+                                                  isMe
+                                                      ? 18
+                                                      : 5),
+                                          bottomRight:
+                                              Radius.circular(
+                                                  isMe
+                                                      ? 5
+                                                      : 18),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment
+                                                .start,
+                                        children: [
 
-                                  const SizedBox(
-                                      width: 8),
+                                          Text(
+                                            username,
+                                            style:
+                                                TextStyle(
+                                              fontWeight:
+                                                  FontWeight
+                                                      .bold,
+                                              fontSize:
+                                                  13,
+                                              color: isMe
+                                                  ? Colors
+                                                      .white70
+                                                  : Colors
+                                                      .blue,
+                                            ),
+                                          ),
 
-                                  Expanded(
-                                    child: Text(
-                                      data[
-                                              "senderName"] ??
-                                          "",
-                                      style:
-                                          const TextStyle(
-                                        fontWeight:
-                                            FontWeight
-                                                .bold,
+                                          const SizedBox(
+                                            height: 5,
+                                          ),
+
+                                          Text(
+                                            msg["text"] ??
+                                                "",
+                                            style:
+                                                TextStyle(
+                                              fontSize:
+                                                  16,
+                                              color: isMe
+                                                  ? Colors
+                                                      .white
+                                                  : Colors
+                                                      .black,
+                                            ),
+                                          ),
+
+                                          const SizedBox(
+                                            height: 8,
+                                          ),
+
+                                          Align(
+                                            alignment:
+                                                Alignment
+                                                    .bottomRight,
+                                            child: Text(
+                                              formatTime(
+                                                msg["time"]
+                                                    as Timestamp?,
+                                              ),
+                                              style:
+                                                  TextStyle(
+                                                fontSize:
+                                                    11,
+                                                color: isMe
+                                                    ? Colors
+                                                        .white60
+                                                    : Colors
+                                                        .grey,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
 
+                                  if (isMe)
+                                    const SizedBox(
+                                      width: 8,
+                                    ),
+
+                                  if (isMe)
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundImage:
+                                          profile.isNotEmpty
+                                              ? NetworkImage(
+                                                  profile,
+                                                )
+                                              : null,
+                                      child:
+                                          profile.isEmpty
+                                              ? const Icon(
+                                                  Icons.person,
+                                                  size: 18,
+                                                )
+                                              : null,
+                                    ),
                                 ],
                               ),
-
-                            if (!isMe)
-                              const SizedBox(height: 8),
-
-                            Text(
-                              data["message"] ?? "",
-                              style: TextStyle(
-                                color: isMe
-                                    ? Colors.white
-                                    : Colors.black,
-                                fontSize: 16,
-                              ),
-                            ),
-
-                            const SizedBox(height: 6),
-
-                            Align(
-                              alignment:
-                                  Alignment.bottomRight,
-                              child: Text(
-
-                                data["timestamp"] == null
-                                    ? ""
-                                    : (data["timestamp"]
-                                            as Timestamp)
-                                        .toDate()
-                                        .toString()
-                                        .substring(11, 16),
-
-                                style: TextStyle(
-                                  color: isMe
-                                      ? Colors.white70
-                                      : Colors.grey,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-
-                          ],
-                        ),
-                      ),
+                            );
+                          },
+                        );
+                      },
                     );
                   },
-                );
-              },
-            ),
-          ),
-                    Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 8,
-            ),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              border: Border(
-                top: BorderSide(
-                  color: Colors.grey,
-                  width: 0.3,
                 ),
               ),
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      textCapitalization:
-                          TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        hintText: "Type a message...",
-                        filled: true,
-                        fillColor: Colors.grey.shade200,
-                        contentPadding:
-                            const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(30),
-                          borderSide: BorderSide.none,
+                            //====================================
+              // MESSAGE INPUT
+              //====================================
+
+              Container(
+                padding: const EdgeInsets.fromLTRB(
+                  8,
+                  6,
+                  8,
+                  10,
+                ),
+                color: Colors.white,
+                child: SafeArea(
+                  child: Row(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.end,
+                    children: [
+
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius:
+                                BorderRadius.circular(30),
+                          ),
+                          child: Row(
+                            children: [
+
+                              IconButton(
+                                onPressed: () {
+                                  // Emoji picker (future)
+                                },
+                                icon: const Icon(
+                                  Icons
+                                      .emoji_emotions_outlined,
+                                  color: Colors.grey,
+                                ),
+                              ),
+
+                              Expanded(
+                                child: TextField(
+                                  controller:
+                                      messageController,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  onChanged: (value) {
+                                    onTyping(value);
+
+                                    if (mounted) {
+                                      setState(() {});
+                                    }
+                                  },
+                                  decoration:
+                                      const InputDecoration(
+                                    hintText:
+                                        "Type a message",
+                                    border:
+                                        InputBorder.none,
+                                  ),
+                                ),
+                              ),
+
+                              PopupMenuButton<String>(
+                                icon: const Icon(
+                                  Icons.attach_file,
+                                  color: Colors.grey,
+                                ),
+                                onSelected: (value) {
+                                  switch (value) {
+                                    case "gallery":
+                                      break;
+
+                                    case "document":
+                                      break;
+
+                                    case "location":
+                                      break;
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+
+                                  PopupMenuItem(
+                                    value: "gallery",
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.image),
+                                        SizedBox(width: 10),
+                                        Text("Gallery"),
+                                      ],
+                                    ),
+                                  ),
+
+                                  PopupMenuItem(
+                                    value: "document",
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.insert_drive_file),
+                                        SizedBox(width: 10),
+                                        Text("Document"),
+                                      ],
+                                    ),
+                                  ),
+
+                                  PopupMenuItem(
+                                    value: "location",
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.location_on),
+                                        SizedBox(width: 10),
+                                        Text("Location"),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      onSubmitted: (_) => sendMessage(),
-                    ),
-                  ),
 
-                  const SizedBox(width: 10),
+                      const SizedBox(width: 8),
 
-                  CircleAvatar(
-                    radius: 25,
-                    backgroundColor: Colors.black,
-                    child: IconButton(
-                      icon: const Icon(
-                        Icons.send,
-                        color: Colors.white,
+                      CircleAvatar(
+                        radius: 26,
+                        backgroundColor: Colors.black,
+                        child: IconButton(
+                          onPressed: sendMessage,
+                          icon: const Icon(
+                            Icons.send,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
-                      onPressed: sendMessage,
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
-  }
-
-  @override
-  void dispose() {
-    _messageController.dispose();
-    _scrollController.dispose();
-    super.dispose();
   }
 }

@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'user_setting.dart';
+import 'create_group_screen.dart';
+import 'chat_screen.dart'; // 🔥 ADDED
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,20 +19,34 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  String get phoneNumber => _auth.currentUser?.phoneNumber ?? "";
+  final TextEditingController _searchController = TextEditingController();
+
+  String get phoneNumber {
+  String phone = _auth.currentUser?.phoneNumber ?? "";
+
+  if (phone.startsWith("+91")) {
+    phone = phone.substring(3);
+  }
+
+  return phone;
+}
 
   Stream<DocumentSnapshot<Map<String, dynamic>>> getUser() {
-    return _firestore
-        .collection("users")
-        .doc(phoneNumber)
-        .snapshots();
+    return _firestore.collection("users").doc(phoneNumber).snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getGroups() {
-    return _firestore
-        .collection("groups")
-        .where("members", arrayContains: phoneNumber)
-        .snapshots();
+    return _firestore.collection("groups").snapshots();
+  }
+
+  Future<void> joinGroup(String groupId) async {
+    await _firestore.collection("groups").doc(groupId).update({
+      "members": FieldValue.arrayUnion([phoneNumber]),
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Joined Group")),
+    );
   }
 
   @override
@@ -38,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
 
+      // 🖤 APP BAR
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
@@ -47,10 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!snapshot.hasData || !snapshot.data!.exists) {
               return const Text(
                 "Tlangau",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(color: Colors.white),
               );
             }
 
@@ -61,10 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const CircleAvatar(
                   radius: 18,
                   backgroundColor: Colors.white24,
-                  child: Icon(
-                    Icons.person,
-                    color: Colors.white,
-                  ),
+                  child: Icon(Icons.person, color: Colors.white),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -74,7 +85,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 18,
                     ),
                   ),
                 ),
@@ -84,132 +94,187 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: getGroups(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+      // 🔥 BODY
+      body: Column(
+        children: [
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(
-              child: Text(
-                "No Groups Yet",
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+          // 🔍 SEARCH
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 15,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() {}),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  icon: Icon(Icons.search, color: Colors.black54),
+                  hintText: "Search or Join Group",
                 ),
               ),
-            );
-          }
+            ),
+          ),
 
-          final groups = snapshot.data!.docs;
+          // 📌 GROUP LIST
+          Expanded(
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: getGroups(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-          return ListView.builder(
-            itemCount: groups.length,
-            itemBuilder: (context, index) {
-              final group = groups[index].data();
+                final search = _searchController.text.toLowerCase();
 
-              return Card(
-                margin: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                child: ListTile(
-                  leading: const CircleAvatar(
-                    radius: 25,
-                    backgroundColor: Colors.black,
-                    child: Icon(
-                      Icons.groups,
-                      color: Colors.white,
+                final groups = snapshot.data!.docs.where((doc) {
+                  final name =
+                      (doc["name"] ?? "").toString().toLowerCase();
+                  return name.contains(search);
+                }).toList();
+
+                if (groups.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      "No Groups Found",
+                      style: TextStyle(fontSize: 18),
                     ),
-                  ),
-                  title: Text(
-                    group["name"] ?? "Unnamed Group",
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: Text(
-                    group["lastMessage"] ?? "No messages yet",
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        group["lastMessageTime"] ?? "",
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey,
-                        ),
+                  );
+                }
+
+                return ListView.builder(
+                  itemCount: groups.length,
+                  itemBuilder: (context, index) {
+                    final group = groups[index].data();
+                    final groupId = groups[index].id;
+
+                    final members =
+                        List<String>.from(group["members"] ?? []);
+
+                    final alreadyJoined =
+                        members.contains(phoneNumber);
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
                       ),
-                      const SizedBox(height: 5),
-                      if ((group["unreadCount"] ?? 0) > 0)
-                        CircleAvatar(
-                          radius: 10,
-                          backgroundColor: Colors.green,
-                          child: Text(
-                            "${group["unreadCount"]}",
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Colors.black,
+                          child: Icon(
+                            Icons.groups,
+                            color: Colors.white,
                           ),
                         ),
-                    ],
-                  ),
-                  onTap: () {
-                    // Chat screen later
+
+                        title: Text(
+                          group["name"] ?? "Unnamed Group",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+
+                        subtitle: Text(
+                          group["lastMessage"] ?? "No messages yet",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+
+                        trailing: alreadyJoined
+                            ? const Text(
+                                "Joined",
+                                style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.black,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () {
+                                  joinGroup(groupId);
+                                },
+                                child: const Text("Join"),
+                              ),
+
+                        // 🔥 CLICK TO OPEN CHAT
+                        onTap: () {
+                          if (!alreadyJoined) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text("Join group first"),
+                              ),
+                            );
+                            return;
+                          }
+
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ChatScreen(
+                                groupId: groupId,
+                                groupName:
+                                    group["name"] ?? "Group",
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    );
                   },
-                ),
-              );
-            },
-          );
-        },
+                );
+              },
+            ),
+          ),
+        ],
       ),
 
+      // ➕ CREATE GROUP
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Create Group coming soon"),
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CreateGroupScreen(
+                phoneNumber: phoneNumber,
+              ),
             ),
           );
         },
         child: const Icon(Icons.group_add),
       ),
 
+      // ⚙️ SETTINGS
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: Colors.black,
         unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-
         onTap: (index) {
-          if (index == 0) {
-            setState(() {
-              _currentIndex = 0;
-            });
-          } else if (index == 1) {
+          if (index == 1) {
             Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) => const UserSettingScreen(),
               ),
-            ).then((_) {
-              setState(() {
-                _currentIndex = 0;
-              });
+            );
+          } else {
+            setState(() {
+              _currentIndex = 0;
             });
           }
         },
-
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.groups),
