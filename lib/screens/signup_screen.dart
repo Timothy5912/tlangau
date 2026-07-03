@@ -92,7 +92,7 @@ class _SignupScreenState extends State<SignupScreen> {
           context,
           MaterialPageRoute(
             builder: (_) =>
-                CreatePasswordScreen(
+                CreateProfileScreen(
               phoneNumber:
                   widget.phoneNumber,
             ),

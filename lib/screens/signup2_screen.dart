@@ -1,107 +1,133 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
-import 'profile_screen.dart';
+import 'home_screen.dart';
 
-class CreatePasswordScreen extends StatefulWidget {
+class CreateProfileScreen extends StatefulWidget {
   final String phoneNumber;
 
-  const CreatePasswordScreen({
+  const CreateProfileScreen({
     super.key,
     required this.phoneNumber,
   });
 
   @override
-  State<CreatePasswordScreen> createState() =>
-      _CreatePasswordScreenState();
+  State<CreateProfileScreen> createState() =>
+      _CreateProfileScreenState();
 }
 
-class _CreatePasswordScreenState
-    extends State<CreatePasswordScreen> {
+class _CreateProfileScreenState
+    extends State<CreateProfileScreen> {
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
-  final TextEditingController _passwordController =
+  final FirebaseStorage _storage =
+      FirebaseStorage.instance;
+
+  final ImagePicker _picker =
+      ImagePicker();
+
+  final TextEditingController _nameController =
       TextEditingController();
 
-  final TextEditingController _confirmPasswordController =
+  final TextEditingController _usernameController =
       TextEditingController();
 
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
-  bool _isLoading = false;
+  File? _image;
+
+  bool _loading = false;
 
   @override
   void dispose() {
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
+    _nameController.dispose();
+    _usernameController.dispose();
     super.dispose();
   }
 
-  Future<void> _createAccount() async {
-    String password = _passwordController.text.trim();
-    String confirmPassword =
-        _confirmPasswordController.text.trim();
+  Future<void> pickImage() async {
+    final XFile? picked =
+        await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
 
-    if (password.isEmpty ||
-        confirmPassword.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text("Please fill in all fields."),
-        ),
-      );
-      return;
+    if (picked != null) {
+      setState(() {
+        _image = File(picked.path);
+      });
+    }
+  }
+
+  Future<String> uploadImage() async {
+    if (_image == null) {
+      return "";
     }
 
-    if (password.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    final ref = _storage
+        .ref()
+        .child("profile_images")
+        .child("${widget.phoneNumber}.jpg");
+
+    await ref.putFile(_image!);
+
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> saveProfile() async {
+    final name =
+        _nameController.text.trim();
+
+    final username =
+        _usernameController.text.trim();
+
+    if (name.isEmpty ||
+        username.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
           content: Text(
-              "Password must be at least 6 characters."),
-        ),
-      );
-      return;
-    }
-
-    if (password != confirmPassword) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text("Passwords do not match."),
+            "Please fill all fields.",
+          ),
         ),
       );
       return;
     }
 
     setState(() {
-      _isLoading = true;
+      _loading = true;
     });
 
     try {
-      await _firestore
+      final imageUrl =
+          await uploadImage();
+                await _firestore
           .collection("users")
           .doc(widget.phoneNumber)
-          .set({
-        "phoneNumber": widget.phoneNumber,
-        "password": password,
-        "createdAt": FieldValue.serverTimestamp(),
+          .update({
+        "name": name,
+        "username": username,
+        "profileImage": imageUrl,
+        "updatedAt": FieldValue.serverTimestamp(),
       });
 
       setState(() {
-        _isLoading = false;
+        _loading = false;
       });
 
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (_) => ProfileScreen(phoneNumber: widget.phoneNumber),
+          builder: (_) => const HomeScreen(),
         ),
         (route) => false,
       );
     } catch (e) {
       setState(() {
-        _isLoading = false;
+        _loading = false;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -116,255 +142,114 @@ class _CreatePasswordScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        elevation: 0,
+        title: const Text(
+          "Create Profile",
+          style: TextStyle(
+            color: Colors.white,
+          ),
+        ),
+      ),
+
       body: SafeArea(
-        child: Column(
-          children: [
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(25),
+          child: Column(
+            children: [
 
-            Container(
-              width: double.infinity,
-              height: 56,
-              color: Colors.black,
-              alignment: Alignment.centerLeft,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20),
-              child: const Text(
-                "Tlangau",
+              const SizedBox(height: 20),
+
+              GestureDetector(
+                onTap: pickImage,
+                child: CircleAvatar(
+                  radius: 60,
+                  backgroundColor: Colors.grey.shade300,
+                  backgroundImage: _image != null
+                      ? FileImage(_image!)
+                      : null,
+                  child: _image == null
+                      ? const Icon(
+                          Icons.camera_alt,
+                          size: 40,
+                          color: Colors.black54,
+                        )
+                      : null,
+                ),
+              ),
+
+              const SizedBox(height: 15),
+
+              const Text(
+                "Tap to choose profile picture",
                 style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
+                  color: Colors.grey,
                 ),
               ),
-            ),
 
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 30),
-                child: Column(
-                  children: [
+              const SizedBox(height: 35),
 
-                    const SizedBox(height: 60),
-
-                    const Text(
-                      "Create Password",
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    const Text(
-                      "Create a secure password for your account.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-
-                    const SizedBox(height: 50),
-
-                    const Align(
-                      alignment:
-                          Alignment.centerLeft,
-                      child: Text(
-                        "Password",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    TextField(
-                      controller:
-                          _passwordController,
-                      obscureText:
-                          _obscurePassword,
-                      decoration:
-                          InputDecoration(
-                        hintText:
-                            "Enter password",
-                        border:
-                            OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(
-                                  14),
-                        ),
-                        enabledBorder:
-                            OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(
-                                  14),
-                          borderSide:
-                              const BorderSide(
-                                  color:
-                                      Colors.grey),
-                        ),
-                        focusedBorder:
-                            OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(
-                                  14),
-                          borderSide:
-                              const BorderSide(
-                                  color:
-                                      Colors.black),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePassword
-                                ? Icons.visibility
-                                : Icons
-                                    .visibility_off,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _obscurePassword =
-                                  !_obscurePassword;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 25),
-
-                    const Align(
-                      alignment:
-                          Alignment.centerLeft,
-                      child: Text(
-                        "Confirm Password",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    TextField(
-                      controller:
-                          _confirmPasswordController,
-                      obscureText:
-                          _obscureConfirmPassword,
-                                                decoration: InputDecoration(
-                        hintText: "Confirm password",
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Colors.grey,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Colors.black,
-                          ),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscureConfirmPassword
-                                ? Icons.visibility
-                                : Icons.visibility_off,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _obscureConfirmPassword =
-                                  !_obscureConfirmPassword;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 45),
-
-                    Center(
-                      child: SizedBox(
-                        width: 220,
-                        height: 55,
-                        child: ElevatedButton(
-                          onPressed:
-                              _isLoading ? null : _createAccount,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  "Create Account",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 40),
-
-                    RichText(
-                      textAlign: TextAlign.center,
-                      text: const TextSpan(
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 14,
-                        ),
-                        children: [
-                          TextSpan(
-                            text:
-                                "By clicking continue, you agree to our ",
-                          ),
-                          TextSpan(
-                            text: "Terms of Service",
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          TextSpan(text: " and "),
-                          TextSpan(
-                            text: "Privacy Policy",
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 25),
-                  ],
+              TextField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: "Full Name",
+                  prefixIcon: const Icon(Icons.person),
+                  border: OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(15),
+                  ),
                 ),
               ),
-            ),
-          ],
+
+              const SizedBox(height: 20),
+
+              TextField(
+                controller: _usernameController,
+                decoration: InputDecoration(
+                  labelText: "Username",
+                  prefixIcon: const Icon(Icons.alternate_email),
+                  border: OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 40),
+
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  onPressed:
+                      _loading ? null : saveProfile,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(15),
+                    ),
+                  ),
+                  child: _loading
+                      ? const CircularProgressIndicator(
+                          color: Colors.white,
+                        )
+                      : const Text(
+                          "Continue",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight:
+                                FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+                            const SizedBox(height: 30),
+            ],
+          ),
         ),
       ),
     );
