@@ -14,8 +14,7 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  final TextEditingController _phoneController =
-      TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
 
   bool _isLoading = false;
 
@@ -26,110 +25,52 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _generateOtp() async {
-    String phone = _phoneController.text.trim();
+    final String phone = _phoneController.text.trim(); // 10 digits only
 
-    if (phone.isEmpty) {
+    if (phone.isEmpty || phone.length != 10) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please enter phone number"),
-        ),
+        const SnackBar(content: Text("Enter valid 10-digit number")),
       );
       return;
     }
 
-    if (phone.length != 10) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Phone number must contain exactly 10 digits"),
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     await _auth.verifyPhoneNumber(
+      // +91 is used ONLY for Firebase authentication
       phoneNumber: "+91$phone",
 
-      verificationCompleted:
-          (PhoneAuthCredential credential) async {
-        try {
-          await _auth.signInWithCredential(credential);
-
-          if (!mounted) return;
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Phone verified automatically"),
-            ),
-          );
-        } catch (e) {
-          if (!mounted) return;
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(e.toString()),
-            ),
-          );
-        }
+      verificationCompleted: (PhoneAuthCredential credential) async {
+        await _auth.signInWithCredential(credential);
       },
 
-      verificationFailed:
-          (FirebaseAuthException e) {
-
-        if (!mounted) return;
-
-        setState(() {
-          _isLoading = false;
-        });
+      verificationFailed: (FirebaseAuthException e) {
+        setState(() => _isLoading = false);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.message ??
-                  "Failed to send OTP",
-            ),
-          ),
+          SnackBar(content: Text(e.message ?? "OTP failed")),
         );
       },
 
-      codeSent:
-          (String verificationId,
-              int? resendToken) {
-
-        if (!mounted) return;
-
-        setState(() {
-          _isLoading = false;
-        });
+      codeSent: (String verificationId, int? resendToken) {
+        setState(() => _isLoading = false);
 
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => SignupScreen(
-              verificationId:
-                  verificationId,
+              verificationId: verificationId,
+              // Pass ONLY the 10-digit number
               phoneNumber: phone,
             ),
           ),
         );
       },
 
-      codeAutoRetrievalTimeout:
-          (String verificationId) {
-        if (!mounted) return;
-
-        setState(() {
-          _isLoading = false;
-        });
+      codeAutoRetrievalTimeout: (String verificationId) {
+        setState(() => _isLoading = false);
       },
     );
-  }
-
-  void _goToAdminLogin() {
-    // TODO: Admin Login Screen
   }
 
   @override
@@ -139,7 +80,6 @@ class _AuthScreenState extends State<AuthScreen> {
       body: SafeArea(
         child: Column(
           children: [
-                        // Header
             Container(
               width: double.infinity,
               height: 56,
@@ -151,180 +91,42 @@ class _AuthScreenState extends State<AuthScreen> {
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 20,
-                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
 
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 30),
+            const SizedBox(height: 40),
 
-                    const Text(
-                      "Create an account",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+            const Text(
+              "Enter Phone Number",
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
 
-                    const SizedBox(height: 12),
-
-                    const Text(
-                      "Enter your 10-digit phone number to receive an OTP.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-
-                    const SizedBox(height: 35),
-
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        "Phone Number",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    TextField(
-                      controller: _phoneController,
-                      keyboardType: TextInputType.phone,
-                      maxLength: 10,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(10),
-                      ],
-                      decoration: InputDecoration(
-                        counterText: "",
-                        prefixText: "+91 ",
-                        hintText: "9876543210",
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(14),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Colors.grey,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 40),
-
-                    Center(
-                      child: SizedBox(
-                        width: 190,
-                        height: 52,
-                        child: ElevatedButton(
-                          onPressed:
-                              _isLoading ? null : _generateOtp,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child:
-                                      CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  "Generate OTP",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 70),
-
-                    TextButton(
-                      onPressed: _goToAdminLogin,
-                      child: const Text(
-                        "Admin Login",
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.blue,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    RichText(
-                      textAlign: TextAlign.center,
-                      text: const TextSpan(
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                        ),
-                        children: [
-                          TextSpan(
-                            text:
-                                "By clicking continue, you agree to our ",
-                          ),
-                          TextSpan(
-                            text: "Terms of Service",
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          TextSpan(text: " and "),
-                          TextSpan(
-                            text: "Privacy Policy",
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-                  ],
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: TextField(
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
+                maxLength: 10,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                ],
+                decoration: const InputDecoration(
+                  prefixText: "+91 ",
+                  border: OutlineInputBorder(),
+                  hintText: "Enter phone number",
                 ),
               ),
+            ),
+
+            ElevatedButton(
+              onPressed: _isLoading ? null : _generateOtp,
+              child: _isLoading
+                  ? const CircularProgressIndicator()
+                  : const Text("Generate OTP"),
             ),
           ],
         ),
