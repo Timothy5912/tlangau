@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'home_screen.dart';
 import 'signup2_screen.dart';
+import 'profile_screen.dart';
 
 class SignupScreen extends StatefulWidget {
   final String verificationId;

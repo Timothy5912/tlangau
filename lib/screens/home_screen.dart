@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'user_setting.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,54 +14,22 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  final String phoneNumber;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  _HomeScreenState() : phoneNumber = "";
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    final args =
-        ModalRoute.of(context)?.settings.arguments;
-
-    if (args is String && args.isNotEmpty) {
-      // phone number passed from CreateProfileScreen
-    }
-  }
+  String get phoneNumber => _auth.currentUser?.phoneNumber ?? "";
 
   Stream<DocumentSnapshot<Map<String, dynamic>>> getUser() {
-    final routeArgs =
-        ModalRoute.of(context)?.settings.arguments;
-
-    String number = "";
-
-    if (routeArgs is String) {
-      number = routeArgs;
-    }
-
-    return FirebaseFirestore.instance
+    return _firestore
         .collection("users")
-        .doc(number)
+        .doc(phoneNumber)
         .snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getGroups() {
-    final routeArgs =
-        ModalRoute.of(context)?.settings.arguments;
-
-    String number = "";
-
-    if (routeArgs is String) {
-      number = routeArgs;
-    }
-
-    return FirebaseFirestore.instance
+    return _firestore
         .collection("groups")
-        .where(
-          "members",
-          arrayContains: number,
-        )
+        .where("members", arrayContains: phoneNumber)
         .snapshots();
   }
 
@@ -70,19 +41,15 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
-
-        title: StreamBuilder<
-            DocumentSnapshot<Map<String, dynamic>>>(
+        title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: getUser(),
-
           builder: (context, snapshot) {
-
-            if (!snapshot.hasData ||
-                !snapshot.data!.exists) {
+            if (!snapshot.hasData || !snapshot.data!.exists) {
               return const Text(
-                "Loading...",
+                "Tlangau",
                 style: TextStyle(
                   color: Colors.white,
+                  fontWeight: FontWeight.bold,
                 ),
               );
             }
@@ -91,62 +58,47 @@ class _HomeScreenState extends State<HomeScreen> {
 
             return Row(
               children: [
-                CircleAvatar(
+                const CircleAvatar(
                   radius: 18,
-                  backgroundImage:
-                      user["profileImage"] != null &&
-                              user["profileImage"] != ""
-                          ? NetworkImage(
-                              user["profileImage"],
-                            )
-                          : null,
-                  child:
-                      user["profileImage"] == null ||
-                              user["profileImage"] == ""
-                          ? const Icon(Icons.person)
-                          : null,
-                ),
-
-                const SizedBox(width: 12),
-
-                Text(
-                  user["name"] ?? "",
-                  style: const TextStyle(
+                  backgroundColor: Colors.white24,
+                  child: Icon(
+                    Icons.person,
                     color: Colors.white,
-                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    user["name"] ?? "",
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
                   ),
                 ),
               ],
             );
           },
         ),
-
-        actions: const [
-          Icon(Icons.search, color: Colors.white),
-          SizedBox(width: 15),
-          Icon(Icons.more_vert, color: Colors.white),
-          SizedBox(width: 10),
-        ],
       ),
-            body: StreamBuilder<
-          QuerySnapshot<Map<String, dynamic>>>(
+
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: getGroups(),
         builder: (context, snapshot) {
-
-          if (snapshot.connectionState ==
-              ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
               child: CircularProgressIndicator(),
             );
           }
 
-          if (!snapshot.hasData ||
-              snapshot.data!.docs.isEmpty) {
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return const Center(
               child: Text(
                 "No Groups Yet",
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -156,114 +108,78 @@ class _HomeScreenState extends State<HomeScreen> {
           final groups = snapshot.data!.docs;
 
           return ListView.builder(
-            padding: const EdgeInsets.only(top: 8),
             itemCount: groups.length,
             itemBuilder: (context, index) {
-
               final group = groups[index].data();
 
               return Card(
-                elevation: 2,
                 margin: const EdgeInsets.symmetric(
                   horizontal: 10,
                   vertical: 6,
                 ),
-
                 child: ListTile(
-
-                  leading: CircleAvatar(
-                    radius: 26,
+                  leading: const CircleAvatar(
+                    radius: 25,
                     backgroundColor: Colors.black,
-
-                    backgroundImage:
-                        group["groupImage"] != null &&
-                                group["groupImage"] != ""
-                            ? NetworkImage(
-                                group["groupImage"],
-                              )
-                            : null,
-
-                    child: group["groupImage"] == null ||
-                            group["groupImage"] == ""
-                        ? const Icon(
-                            Icons.groups,
-                            color: Colors.white,
-                          )
-                        : null,
+                    child: Icon(
+                      Icons.groups,
+                      color: Colors.white,
+                    ),
                   ),
-
                   title: Text(
-                    group["name"] ?? "",
+                    group["name"] ?? "Unnamed Group",
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-
                   subtitle: Text(
-                    group["lastMessage"] ??
-                        "No messages yet",
+                    group["lastMessage"] ?? "No messages yet",
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-
                   trailing: Column(
-                    mainAxisAlignment:
-                        MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-
                       Text(
                         group["lastMessageTime"] ?? "",
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: 10,
                           color: Colors.grey,
                         ),
                       ),
-
                       const SizedBox(height: 5),
-
                       if ((group["unreadCount"] ?? 0) > 0)
                         CircleAvatar(
                           radius: 10,
                           backgroundColor: Colors.green,
                           child: Text(
-                            group["unreadCount"]
-                                .toString(),
+                            "${group["unreadCount"]}",
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 11,
+                              fontSize: 10,
                             ),
                           ),
                         ),
                     ],
                   ),
-
                   onTap: () {
-
-                    Navigator.pushNamed(
-                      context,
-                      "/chat",
-                      arguments: {
-                        "groupId": groups[index].id,
-                        "groupName":
-                            group["name"],
-                      },
-                    );
-
+                    // Chat screen later
                   },
-
                 ),
               );
             },
           );
         },
       ),
-            floatingActionButton: FloatingActionButton(
+
+      floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         onPressed: () {
-          Navigator.pushNamed(
-            context,
-            "/createGroup",
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Create Group coming soon"),
+            ),
           );
         },
         child: const Icon(Icons.group_add),
@@ -271,31 +187,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        backgroundColor: Colors.black,
-        selectedItemColor: Colors.white,
+        selectedItemColor: Colors.black,
         unselectedItemColor: Colors.grey,
         type: BottomNavigationBarType.fixed,
 
         onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-
-          if (index == 1) {
-            Navigator.pushNamed(
+          if (index == 0) {
+            setState(() {
+              _currentIndex = 0;
+            });
+          } else if (index == 1) {
+            Navigator.push(
               context,
-              "/settings",
-            );
+              MaterialPageRoute(
+                builder: (_) => const UserSettingScreen(),
+              ),
+            ).then((_) {
+              setState(() {
+                _currentIndex = 0;
+              });
+            });
           }
         },
 
         items: const [
-
           BottomNavigationBarItem(
             icon: Icon(Icons.groups),
             label: "Groups",
           ),
-
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),
             label: "Settings",
