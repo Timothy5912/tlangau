@@ -43,6 +43,195 @@ class _HomeScreenState extends State<HomeScreen> {
     return _firestore.collection("groups").snapshots();
   }
 
+  //====================================================
+  // Invites
+  //====================================================
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getInvites() {
+    return _firestore
+        .collection("users")
+        .doc(phoneNumber)
+        .collection("invites")
+        .orderBy("time", descending: true)
+        .snapshots();
+  }
+
+  Future<Map<String, dynamic>> getUserByPhone(String phone) async {
+    final doc = await _firestore.collection("users").doc(phone).get();
+    return doc.data() ?? {};
+  }
+
+  Future<void> acceptInvite({
+    required String inviteId,
+    required String groupId,
+  }) async {
+    await _firestore.collection("groups").doc(groupId).update({
+      "members": FieldValue.arrayUnion([phoneNumber]),
+    });
+
+    await _firestore
+        .collection("users")
+        .doc(phoneNumber)
+        .collection("invites")
+        .doc(inviteId)
+        .delete();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Joined Group"),
+      ),
+    );
+  }
+
+  Future<void> ignoreInvite(String inviteId) async {
+    await _firestore
+        .collection("users")
+        .doc(phoneNumber)
+        .collection("invites")
+        .doc(inviteId)
+        .delete();
+  }
+
+  void openInvites() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: StreamBuilder<
+              QuerySnapshot<Map<String, dynamic>>>(
+            stream: getInvites(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.all(30),
+                  child: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              final invites = snapshot.data!.docs;
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Invites",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    const SizedBox(height: 15),
+
+                    if (invites.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(
+                          vertical: 30,
+                        ),
+                        child: Text(
+                          "No invites right now",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: invites.length,
+                        itemBuilder: (context, index) {
+                          final inviteDoc = invites[index];
+                          final invite = inviteDoc.data();
+
+                          final groupId = invite["groupId"] ?? "";
+                          final groupName =
+                              invite["groupName"] ?? "a group";
+                          final invitedBy =
+                              invite["invitedBy"] ?? "";
+
+                          return FutureBuilder<
+                              Map<String, dynamic>>(
+                            future: getUserByPhone(invitedBy),
+                            builder: (context, userSnap) {
+                              final inviter = userSnap.data ?? {};
+
+                              final inviterName =
+                                  inviter["username"] ??
+                                      inviter["name"] ??
+                                      invitedBy;
+
+                              return ListTile(
+                                leading: const CircleAvatar(
+                                  backgroundColor: Colors.black,
+                                  child: Icon(
+                                    Icons.groups,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                title: Text(
+                                  "$inviterName invites you to join $groupName",
+                                ),
+                                trailing: Row(
+                                  mainAxisSize:
+                                      MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.check_circle,
+                                        color: Colors.green,
+                                      ),
+                                      onPressed: () async {
+                                        await acceptInvite(
+                                          inviteId: inviteDoc.id,
+                                          groupId: groupId,
+                                        );
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.cancel,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () async {
+                                        await ignoreInvite(
+                                          inviteDoc.id,
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> joinGroup(String groupId) async {
     await _firestore.collection("groups").doc(groupId).update({
       "members": FieldValue.arrayUnion([phoneNumber]),
@@ -118,6 +307,53 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
+
+        actions: [
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: getInvites(),
+            builder: (context, snapshot) {
+              final count = snapshot.data?.docs.length ?? 0;
+
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.notifications_outlined,
+                      color: Colors.white,
+                    ),
+                    onPressed: openInvites,
+                  ),
+                  if (count > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          "$count",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
 
       body: Column(
