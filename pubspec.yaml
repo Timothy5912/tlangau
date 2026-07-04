@@ -23,7 +23,8 @@ dependencies:
 
   # State Management
   provider: ^6.1.5
-
+  # recorder
+  record: ^6.0.0
   # Fonts
   google_fonts: ^6.3.1
 

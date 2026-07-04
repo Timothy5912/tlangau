@@ -186,7 +186,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   //====================================================
-  // Creator Functions
+  // Creator Functions — Members
   //====================================================
 
   Future<void> removeMember(
@@ -200,6 +200,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  //====================================================
+  // Creator Functions — Group Settings
+  //====================================================
+
   Future<void> deleteGroup() async {
     await _firestore
         .collection("groups")
@@ -210,8 +214,59 @@ class _ChatScreenState extends State<ChatScreen> {
       Navigator.pop(context);
     }
   }
+
+  Future<void> updateGroup(
+      String name, String description) async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .update({
+      "groupName": name,
+      "description": description,
+    });
+  }
+
+  //====================================================
+  // Creator Functions — Join Requests
+  //====================================================
+
+  Future<void> acceptJoinRequest(String phone) async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .update({
+      "members": FieldValue.arrayUnion([phone]),
+      "joinRequests": FieldValue.arrayRemove([phone]),
+    });
+  }
+
+  Future<void> rejectJoinRequest(String phone) async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .update({
+      "joinRequests": FieldValue.arrayRemove([phone]),
+    });
+  }
+
+  //====================================================
+  // Creator Functions — Invite Users
+  //====================================================
+
+  Future<void> inviteUser(String phone) async {
+    await _firestore
+        .collection("users")
+        .doc(phone)
+        .collection("invites")
+        .add({
+      "groupId": widget.groupId,
+      "groupName": widget.groupName,
+      "invitedBy": phoneNumber,
+      "time": FieldValue.serverTimestamp(),
+    });
+  }
     //====================================================
-  // Member List
+  // Member List (Manage Members)
   //====================================================
 
   void openMemberList({
@@ -239,7 +294,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
 
                 const Text(
-                  "Group Members",
+                  "Manage Members",
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -373,6 +428,347 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(height: 10),
               ],
             ),
+          ),
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Manage Group (edit name / description / delete)
+  //====================================================
+
+  void openManageGroup(Map<String, dynamic> group) {
+    final nameController = TextEditingController(
+      text: group["groupName"] ?? widget.groupName,
+    );
+    final descController = TextEditingController(
+      text: group["description"] ?? "",
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text("Manage Group"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: "Group Name",
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: "Group Description",
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text(
+                "Cancel",
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) {
+                    return AlertDialog(
+                      title: const Text("Delete Group"),
+                      content: const Text(
+                        "This will permanently delete the group for everyone. Are you sure?",
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.pop(context, false),
+                          child: const Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.pop(context, true),
+                          child: const Text(
+                            "Delete",
+                            style:
+                                TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+
+                if (confirm == true) {
+                  await deleteGroup();
+                }
+              },
+              child: const Text(
+                "Delete Group",
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+              ),
+              onPressed: () async {
+                final newName = nameController.text.trim();
+                final newDesc = descController.text.trim();
+
+                if (newName.isEmpty) return;
+
+                await updateGroup(newName, newDesc);
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text(
+                "Save",
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Join Requests
+  //====================================================
+
+  void openJoinRequests() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: StreamBuilder<
+              DocumentSnapshot<Map<String, dynamic>>>(
+            stream: getGroup(),
+            builder: (context, snapshot) {
+              final data = snapshot.data?.data() ?? {};
+
+              final requests = List<String>.from(
+                data["joinRequests"] ?? [],
+              );
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Join Requests",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+
+                    if (requests.isEmpty)
+                      const Padding(
+                        padding:
+                            EdgeInsets.symmetric(vertical: 30),
+                        child: Text(
+                          "No pending join requests",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: requests.length,
+                        itemBuilder: (context, index) {
+                          final phone = requests[index];
+
+                          return FutureBuilder<
+                              Map<String, dynamic>>(
+                            future: getUser(phone),
+                            builder: (context, snap) {
+                              final user = snap.data ?? {};
+
+                              final username =
+                                  user["username"] ??
+                                      user["name"] ??
+                                      phone;
+
+                              return ListTile(
+                                leading: const CircleAvatar(
+                                  child: Icon(Icons.person),
+                                ),
+                                title: Text(username),
+                                subtitle: Text(phone),
+                                trailing: Row(
+                                  mainAxisSize:
+                                      MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.check_circle,
+                                        color: Colors.green,
+                                      ),
+                                      onPressed: () async {
+                                        await acceptJoinRequest(
+                                            phone);
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.cancel,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () async {
+                                        await rejectJoinRequest(
+                                            phone);
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Invite Users
+  //====================================================
+
+  void openInviteUsers() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: StreamBuilder<
+              QuerySnapshot<Map<String, dynamic>>>(
+            stream: _firestore.collection("users").snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.all(30),
+                  child: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              final users = snapshot.data!.docs
+                  .where((doc) => doc.id != phoneNumber)
+                  .toList();
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Invite Users",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: users.length,
+                        itemBuilder: (context, index) {
+                          final doc = users[index];
+                          final data = doc.data();
+
+                          final username =
+                              data["username"] ??
+                                  data["name"] ??
+                                  doc.id;
+
+                          return ListTile(
+                            leading: const CircleAvatar(
+                              child: Icon(Icons.person),
+                            ),
+                            title: Text(username),
+                            subtitle: Text(doc.id),
+                            trailing: IconButton(
+                              icon: const Icon(
+                                Icons.send,
+                                color: Colors.black,
+                              ),
+                              onPressed: () async {
+                                await inviteUser(doc.id);
+
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context)
+                                      .showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        "Invite sent to $username",
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              );
+            },
           ),
         );
       },
@@ -526,27 +922,15 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
 
             actions: [
-
-              IconButton(
-                icon: const Icon(
-                  Icons.group,
-                ),
-                tooltip: "View Members",
-                onPressed: () {
-                  openMemberList(
-                    members: members,
-                    isCreator: isCreator,
-                    creator: creator,
-                  );
-                },
-              ),
+              // NOTE: group/member icon removed from app bar per request.
+              // Member management now lives only inside the creator's
+              // three-dot menu below.
 
               if (isCreator)
                 PopupMenuButton<String>(
                   onSelected: (value) {
 
-                    if (value ==
-                        "manage") {
+                    if (value == "members") {
                       openMemberList(
                         members: members,
                         isCreator: true,
@@ -554,24 +938,45 @@ class _ChatScreenState extends State<ChatScreen> {
                       );
                     }
 
-                    if (value ==
-                        "delete") {
-                      deleteGroup();
+                    if (value == "group") {
+                      openManageGroup(group);
+                    }
+
+                    if (value == "requests") {
+                      openJoinRequests();
+                    }
+
+                    if (value == "invite") {
+                      openInviteUsers();
                     }
                   },
                   itemBuilder: (_) => const [
 
                     PopupMenuItem(
-                      value: "manage",
+                      value: "members",
                       child: Text(
                         "Manage Members",
                       ),
                     ),
 
                     PopupMenuItem(
-                      value: "delete",
+                      value: "group",
                       child: Text(
-                        "Delete Group",
+                        "Manage Group",
+                      ),
+                    ),
+
+                    PopupMenuItem(
+                      value: "requests",
+                      child: Text(
+                        "Join Requests",
+                      ),
+                    ),
+
+                    PopupMenuItem(
+                      value: "invite",
+                      child: Text(
+                        "Invite Users",
                       ),
                     ),
                   ],
