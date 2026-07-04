@@ -3,6 +3,13 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+// If you add the `share_plus` package to pubspec.yaml you can uncomment
+// this import and use Share.share(...) inside shareGroupLink() below to
+// open the native share sheet instead of / in addition to copying the
+// link to the clipboard.
+// import 'package:share_plus/share_plus.dart';
 
 class ChatScreen extends StatefulWidget {
   final String groupId;
@@ -201,6 +208,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   //====================================================
+  // Member Functions — Leave Group
+  //====================================================
+
+  Future<void> leaveGroup() async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .update({
+      "members": FieldValue.arrayRemove([phoneNumber]),
+    });
+
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  //====================================================
   // Creator Functions — Group Settings
   //====================================================
 
@@ -265,6 +289,43 @@ class _ChatScreenState extends State<ChatScreen> {
       "time": FieldValue.serverTimestamp(),
     });
   }
+
+  //====================================================
+  // Group Invite Link (share-to-join)
+  //====================================================
+  //
+  // NOTE: Replace the domain below with your actual hosting / dynamic
+  // link domain, and make sure your app can handle incoming links of
+  // this shape (e.g. via Firebase Dynamic Links, go_router deep links,
+  // or a universal/app link) by reading the groupId and either adding
+  // the opener straight to "members" or into "joinRequests" depending
+  // on whether the group is open or approval-based.
+
+  String get groupInviteLink =>
+      "https://yourapp.com/join/${widget.groupId}";
+
+  Future<void> shareGroupLink() async {
+    final link = groupInviteLink;
+
+    await Clipboard.setData(ClipboardData(text: link));
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Group link copied to clipboard"),
+        ),
+      );
+    }
+
+    // If you add the `share_plus` package to pubspec.yaml, you can
+    // open the native share sheet instead of (or in addition to) just
+    // copying to the clipboard:
+    //
+    // await Share.share(
+    //   'Join my group "${widget.groupName}" — $link',
+    // );
+  }
+
     //====================================================
   // Member List (Manage Members)
   //====================================================
@@ -552,6 +613,113 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   //====================================================
+  // Group Info (view-only, for members)
+  //====================================================
+
+  void openGroupInfo(Map<String, dynamic> group) {
+    final name = group["groupName"] ?? widget.groupName;
+    final description = group["description"] ?? "";
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text("Group Info"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Group Name",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                name,
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Description",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description.isNotEmpty
+                    ? description
+                    : "No description",
+                style: const TextStyle(fontSize: 16),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text(
+                "Close",
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Leave Group Confirmation
+  //====================================================
+
+  void confirmLeaveGroup() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text("Leave Group"),
+          content: const Text(
+            "Are you sure you want to leave this group?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                "Cancel",
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await leaveGroup();
+              },
+              child: const Text(
+                "Leave",
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  //====================================================
   // Join Requests
   //====================================================
 
@@ -672,10 +840,13 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   //====================================================
-  // Invite Users
+  // Invite Users (search by username / phone + share link)
   //====================================================
 
   void openInviteUsers() {
+    final searchController = TextEditingController();
+    String searchQuery = "";
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -686,90 +857,210 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
       builder: (context) {
-        return SafeArea(
-          child: StreamBuilder<
-              QuerySnapshot<Map<String, dynamic>>>(
-            stream: _firestore.collection("users").snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const Padding(
-                  padding: EdgeInsets.all(30),
-                  child: Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-              }
-
-              final users = snapshot.data!.docs
-                  .where((doc) => doc.id != phoneNumber)
-                  .toList();
-
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      "Invite Users",
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+        // StatefulBuilder gives this sheet its own local setState so the
+        // search box can filter the list live without touching the rest
+        // of the ChatScreen state.
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: StreamBuilder<
+                  QuerySnapshot<Map<String, dynamic>>>(
+                stream:
+                    _firestore.collection("users").snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Padding(
+                      padding: EdgeInsets.all(30),
+                      child: Center(
+                        child: CircularProgressIndicator(),
                       ),
+                    );
+                  }
+
+                  final query = searchQuery.trim().toLowerCase();
+
+                  final users = snapshot.data!.docs.where((doc) {
+                    if (doc.id == phoneNumber) return false;
+
+                    if (query.isEmpty) return true;
+
+                    final data = doc.data();
+
+                    final username = (data["username"] ??
+                            data["name"] ??
+                            "")
+                        .toString()
+                        .toLowerCase();
+
+                    final phone = doc.id.toLowerCase();
+
+                    return username.contains(query) ||
+                        phone.contains(query);
+                  }).toList();
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
                     ),
-                    const SizedBox(height: 15),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          "Invite Users",
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
 
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: users.length,
-                        itemBuilder: (context, index) {
-                          final doc = users[index];
-                          final data = doc.data();
+                        const SizedBox(height: 15),
 
-                          final username =
-                              data["username"] ??
-                                  data["name"] ??
-                                  doc.id;
-
-                          return ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.person),
-                            ),
-                            title: Text(username),
-                            subtitle: Text(doc.id),
-                            trailing: IconButton(
-                              icon: const Icon(
-                                Icons.send,
-                                color: Colors.black,
+                        // Share group link ------------------------------
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                          ),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black,
+                                side: const BorderSide(
+                                  color: Colors.black,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(30),
+                                ),
+                                padding:
+                                    const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
                               ),
-                              onPressed: () async {
-                                await inviteUser(doc.id);
-
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context)
-                                      .showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        "Invite sent to $username",
-                                      ),
-                                    ),
-                                  );
-                                }
-                              },
+                              onPressed: shareGroupLink,
+                              icon: const Icon(Icons.link),
+                              label: const Text(
+                                "Share Group Link",
+                              ),
                             ),
-                          );
-                        },
-                      ),
-                    ),
+                          ),
+                        ),
 
-                    const SizedBox(height: 10),
-                  ],
-                ),
-              );
-            },
-          ),
+                        const SizedBox(height: 15),
+
+                        // Search by username / phone --------------------
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                          ),
+                          child: TextField(
+                            controller: searchController,
+                            onChanged: (value) {
+                              setModalState(() {
+                                searchQuery = value;
+                              });
+                            },
+                            decoration: InputDecoration(
+                              hintText:
+                                  "Search by username or phone number",
+                              prefixIcon:
+                                  const Icon(Icons.search),
+                              suffixIcon: searchQuery.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(
+                                        Icons.clear,
+                                      ),
+                                      onPressed: () {
+                                        searchController.clear();
+                                        setModalState(() {
+                                          searchQuery = "";
+                                        });
+                                      },
+                                    )
+                                  : null,
+                              filled: true,
+                              fillColor: Colors.grey.shade100,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(
+                                vertical: 0,
+                                horizontal: 16,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(30),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        if (users.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              vertical: 30,
+                            ),
+                            child: Text(
+                              "No matching users",
+                              style:
+                                  TextStyle(color: Colors.grey),
+                            ),
+                          ),
+
+                        Flexible(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: users.length,
+                            itemBuilder: (context, index) {
+                              final doc = users[index];
+                              final data = doc.data();
+
+                              final username =
+                                  data["username"] ??
+                                      data["name"] ??
+                                      doc.id;
+
+                              return ListTile(
+                                leading: const CircleAvatar(
+                                  child: Icon(Icons.person),
+                                ),
+                                title: Text(username),
+                                subtitle: Text(doc.id),
+                                trailing: IconButton(
+                                  icon: const Icon(
+                                    Icons.send,
+                                    color: Colors.black,
+                                  ),
+                                  onPressed: () async {
+                                    await inviteUser(doc.id);
+
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(
+                                              context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            "Invite sent to $username",
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          },
         );
       },
     );
@@ -977,6 +1268,36 @@ class _ChatScreenState extends State<ChatScreen> {
                       value: "invite",
                       child: Text(
                         "Invite Users",
+                      ),
+                    ),
+                  ],
+                )
+              else
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+
+                    if (value == "info") {
+                      openGroupInfo(group);
+                    }
+
+                    if (value == "leave") {
+                      confirmLeaveGroup();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+
+                    PopupMenuItem(
+                      value: "info",
+                      child: Text(
+                        "Group Info",
+                      ),
+                    ),
+
+                    PopupMenuItem(
+                      value: "leave",
+                      child: Text(
+                        "Leave Group",
+                        style: TextStyle(color: Colors.red),
                       ),
                     ),
                   ],
