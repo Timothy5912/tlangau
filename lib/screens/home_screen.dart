@@ -2,9 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'user_setting.dart';
+import 'chat_screen.dart';
 import 'create_group_screen.dart';
-import 'chat_screen.dart'; // 🔥 ADDED
+import 'user_setting.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,20 +19,24 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _searchController =
+      TextEditingController();
 
   String get phoneNumber {
-  String phone = _auth.currentUser?.phoneNumber ?? "";
+    String phone = _auth.currentUser?.phoneNumber ?? "";
 
-  if (phone.startsWith("+91")) {
-    phone = phone.substring(3);
+    if (phone.startsWith("+91")) {
+      phone = phone.substring(3);
+    }
+
+    return phone;
   }
 
-  return phone;
-}
-
   Stream<DocumentSnapshot<Map<String, dynamic>>> getUser() {
-    return _firestore.collection("users").doc(phoneNumber).snapshots();
+    return _firestore
+        .collection("users")
+        .doc(phoneNumber)
+        .snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getGroups() {
@@ -44,8 +48,26 @@ class _HomeScreenState extends State<HomeScreen> {
       "members": FieldValue.arrayUnion([phoneNumber]),
     });
 
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Joined Group")),
+      const SnackBar(
+        content: Text("Joined Group"),
+      ),
+    );
+  }
+
+  Future<void> requestToJoin(String groupId) async {
+    await _firestore.collection("groups").doc(groupId).update({
+      "joinRequests": FieldValue.arrayUnion([phoneNumber]),
+    });
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Join request sent"),
+      ),
     );
   }
 
@@ -54,7 +76,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
 
-      // 🖤 APP BAR
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
@@ -64,7 +85,9 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!snapshot.hasData || !snapshot.data!.exists) {
               return const Text(
                 "Tlangau",
-                style: TextStyle(color: Colors.white),
+                style: TextStyle(
+                  color: Colors.white,
+                ),
               );
             }
 
@@ -75,7 +98,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 const CircleAvatar(
                   radius: 18,
                   backgroundColor: Colors.white24,
-                  child: Icon(Icons.person, color: Colors.white),
+                  child: Icon(
+                    Icons.person,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -94,11 +120,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
-      // 🔥 BODY
       body: Column(
         children: [
-
-          // 🔍 SEARCH
           Padding(
             padding: const EdgeInsets.all(10),
             child: Container(
@@ -112,30 +135,39 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: TextField(
                 controller: _searchController,
-                onChanged: (value) => setState(() {}),
+                onChanged: (value) {
+                  setState(() {});
+                },
                 decoration: const InputDecoration(
                   border: InputBorder.none,
-                  icon: Icon(Icons.search, color: Colors.black54),
+                  icon: Icon(
+                    Icons.search,
+                    color: Colors.black54,
+                  ),
                   hintText: "Search or Join Group",
                 ),
               ),
             ),
           ),
 
-          // 📌 GROUP LIST
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: getGroups(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
                 }
 
-                final search = _searchController.text.toLowerCase();
+                final search =
+                    _searchController.text.toLowerCase();
 
                 final groups = snapshot.data!.docs.where((doc) {
-                  final name =
-                      (doc["name"] ?? "").toString().toLowerCase();
+                  final name = (doc["name"] ?? "")
+                      .toString()
+                      .toLowerCase();
+
                   return name.contains(search);
                 }).toList();
 
@@ -155,12 +187,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     final groupId = groups[index].id;
 
                     final members =
-                        List<String>.from(group["members"] ?? []);
+                        List<String>.from(
+                            group["members"] ?? []);
+
+                    final requests =
+                        List<String>.from(
+                            group["joinRequests"] ?? []);
 
                     final alreadyJoined =
                         members.contains(phoneNumber);
 
-                    return Card(
+                    final requested =
+                        requests.contains(phoneNumber);
+                                            return Card(
                       margin: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 6,
@@ -181,10 +220,32 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
 
-                        subtitle: Text(
-                          group["lastMessage"] ?? "No messages yet",
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        subtitle: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              group["lastMessage"] ??
+                                  "No messages yet",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              group["isPrivate"] == true
+                                  ? "🔒 Private Group"
+                                  : "🌍 Public Group",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color:
+                                    group["isPrivate"] == true
+                                        ? Colors.red
+                                        : Colors.green,
+                              ),
+                            ),
+                          ],
                         ),
 
                         trailing: alreadyJoined
@@ -192,27 +253,58 @@ class _HomeScreenState extends State<HomeScreen> {
                                 "Joined",
                                 style: TextStyle(
                                   color: Colors.green,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight:
+                                      FontWeight.bold,
                                 ),
                               )
-                            : ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.black,
-                                  foregroundColor: Colors.white,
-                                ),
-                                onPressed: () {
-                                  joinGroup(groupId);
-                                },
-                                child: const Text("Join"),
-                              ),
+                            : group["isPrivate"] == true
+                                ? requested
+                                    ? const Text(
+                                        "Requested",
+                                        style: TextStyle(
+                                          color: Colors.orange,
+                                          fontWeight:
+                                              FontWeight.bold,
+                                        ),
+                                      )
+                                    : ElevatedButton(
+                                        style:
+                                            ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors.orange,
+                                          foregroundColor:
+                                              Colors.white,
+                                        ),
+                                        onPressed: () {
+                                          requestToJoin(
+                                              groupId);
+                                        },
+                                        child: const Text(
+                                            "Request"),
+                                      )
+                                : ElevatedButton(
+                                    style:
+                                        ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                          Colors.black,
+                                      foregroundColor:
+                                          Colors.white,
+                                    ),
+                                    onPressed: () {
+                                      joinGroup(groupId);
+                                    },
+                                    child:
+                                        const Text("Join"),
+                                  ),
 
-                        // 🔥 CLICK TO OPEN CHAT
                         onTap: () {
                           if (!alreadyJoined) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(
                               const SnackBar(
-                                content:
-                                    Text("Join group first"),
+                                content: Text(
+                                  "Join the group first or wait for approval.",
+                                ),
                               ),
                             );
                             return;
@@ -224,14 +316,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               builder: (_) => ChatScreen(
                                 groupId: groupId,
                                 groupName:
-                                    group["name"] ?? "Group",
+                                    group["name"] ??
+                                        "Group",
                               ),
                             ),
                           );
                         },
                       ),
                     );
-                  },
+                                      },
                 );
               },
             ),
@@ -256,7 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: const Icon(Icons.group_add),
       ),
 
-      // ⚙️ SETTINGS
+      // ⚙️ Bottom Navigation
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: Colors.black,

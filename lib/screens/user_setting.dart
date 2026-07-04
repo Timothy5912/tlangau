@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'welcome_screen.dart';
 import 'profile_edit_screen.dart';
+import 'home_screen.dart';
 
 class UserSettingScreen extends StatelessWidget {
   const UserSettingScreen({super.key});
@@ -29,6 +30,7 @@ class UserSettingScreen extends StatelessWidget {
           style: TextStyle(color: Colors.white),
         ),
       ),
+
       body: ListView(
         children: [
           const SizedBox(height: 20),
@@ -66,6 +68,32 @@ class UserSettingScreen extends StatelessWidget {
             onTap: () => _logout(context),
           ),
         ],
+      ),
+
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 1,
+        selectedItemColor: Colors.black,
+        unselectedItemColor: Colors.grey,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.groups),
+            label: "Groups",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: "Settings",
+          ),
+        ],
+        onTap: (index) {
+          if (index == 0) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const HomeScreen(),
+              ),
+            );
+          }
+        },
       ),
     );
   }
