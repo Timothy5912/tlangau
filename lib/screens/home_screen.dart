@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'chat_screen.dart';
 import 'create_group_screen.dart';
@@ -18,6 +20,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
 
   final TextEditingController _searchController =
       TextEditingController();
@@ -30,6 +36,109 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return phone;
+  }
+
+  //====================================================
+  // Push Notifications (message alerts + sound)
+  //====================================================
+
+  static const AndroidNotificationChannel _messageChannel =
+      AndroidNotificationChannel(
+    "messages_channel",
+    "Messages",
+    description: "Notifications for new group messages",
+    importance: Importance.high,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound("images/notification_sound.mp3"),
+  );
+
+  Future<void> _setupPushNotifications() async {
+    // Ask the user for permission (iOS requires this explicitly).
+    await _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    // Prepare local notifications so we can show a banner + sound
+    // even while the app is open in the foreground.
+    const androidInit =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings =
+        InitializationSettings(android: androidInit);
+
+    await _localNotifications.initialize(initSettings);
+
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(_messageChannel);
+
+    // Save this device's token so the server knows where to send
+    // pushes for this user. Refresh it whenever it changes.
+    final token = await _messaging.getToken();
+
+    if (token != null) {
+      await _firestore.collection("users").doc(phoneNumber).update({
+        "fcmToken": token,
+      });
+    }
+
+    _messaging.onTokenRefresh.listen((newToken) {
+      _firestore.collection("users").doc(phoneNumber).update({
+        "fcmToken": newToken,
+      });
+    });
+
+    // Foreground: the OS won't show a system banner for us, so we
+    // show one ourselves (with sound) using local notifications.
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final notification = message.notification;
+
+      if (notification == null) return;
+
+      _localNotifications.show(
+        notification.hashCode,
+        notification.title,
+        notification.body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _messageChannel.id,
+            _messageChannel.name,
+            channelDescription: _messageChannel.description,
+            importance: Importance.high,
+            priority: Priority.high,
+            playSound: true,
+            sound: _messageChannel.sound,
+          ),
+        ),
+      );
+    });
+
+    // Tapping a notification while the app is backgrounded opens the
+    // relevant group chat.
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      final groupId = message.data["groupId"];
+      final groupName = message.data["groupName"] ?? "Group";
+
+      if (groupId != null && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              groupId: groupId,
+              groupName: groupName,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _setupPushNotifications();
   }
 
   Stream<DocumentSnapshot<Map<String, dynamic>>> getUser() {
