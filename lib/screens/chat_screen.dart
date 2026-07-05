@@ -42,6 +42,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Timer? typingTimer;
 
+  // The message currently being replied to (if any). Holds the raw
+  // Firestore message data plus its doc id so we can attach a quoted
+  // preview onto the next message that gets sent.
+  String? _replyingToId;
+  Map<String, dynamic>? _replyingToMessage;
+
   //====================================================
   // Cache
   //====================================================
@@ -60,6 +66,29 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return phone;
+  }
+
+  // Some groups may have been created back when the phone number was
+  // stored with a "+91" prefix, others without it (depending on where
+  // in the app the write happened). Comparing against a single format
+  // silently returns zero matches if it doesn't line up — which is
+  // what caused the "Make Announcement" group list to show blank on
+  // some accounts/devices even though the groups existed. Instead we
+  // match against every format we can reasonably expect.
+  List<String> get possibleCreatorPhoneFormats {
+    final raw = (_auth.currentUser?.phoneNumber ?? "").trim();
+    final stripped =
+        raw.startsWith("+91") ? raw.substring(3) : raw;
+    final withPrefix =
+        raw.startsWith("+91") ? raw : "+91$raw";
+
+    final formats = <String>{
+      if (raw.isNotEmpty) raw,
+      if (stripped.isNotEmpty) stripped,
+      if (withPrefix.isNotEmpty) withPrefix,
+    };
+
+    return formats.toList();
   }
 
   //====================================================
@@ -156,6 +185,24 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   //====================================================
+  // Reply To Message
+  //====================================================
+
+  void startReply(String messageId, Map<String, dynamic> message) {
+    setState(() {
+      _replyingToId = messageId;
+      _replyingToMessage = message;
+    });
+  }
+
+  void cancelReply() {
+    setState(() {
+      _replyingToId = null;
+      _replyingToMessage = null;
+    });
+  }
+
+  //====================================================
   // Send Message
   //====================================================
 
@@ -164,15 +211,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (text.isEmpty) return;
 
+    final Map<String, dynamic> data = {
+      "text": text,
+      "sender": phoneNumber,
+      "time": FieldValue.serverTimestamp(),
+    };
+
+    if (_replyingToId != null && _replyingToMessage != null) {
+      data["replyToId"] = _replyingToId;
+      data["replyToSender"] = _replyingToMessage!["sender"];
+      data["replyToText"] = _replyingToMessage!["text"] ?? "";
+    }
+
     await _firestore
         .collection("groups")
         .doc(widget.groupId)
         .collection("messages")
-        .add({
-      "text": text,
-      "sender": phoneNumber,
-      "time": FieldValue.serverTimestamp(),
-    });
+        .add(data);
 
     await _firestore
         .collection("groups")
@@ -187,9 +242,138 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setTyping(false);
 
+    cancelReply();
+
     if (mounted) {
       setState(() {});
     }
+  }
+
+  //====================================================
+  // Message Actions (Reply / Delete)
+  //====================================================
+
+  void showMessageActions({
+    required String messageId,
+    required Map<String, dynamic> message,
+    required bool isMe,
+    required bool isCreator,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text("Reply"),
+                onTap: () {
+                  Navigator.pop(context);
+                  startReply(messageId, message);
+                },
+              ),
+              if (isMe || isCreator)
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete,
+                    color: Colors.red,
+                  ),
+                  title: const Text(
+                    "Delete",
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    confirmDeleteMessage(
+                      messageId,
+                      deletedByCreator: !isMe && isCreator,
+                    );
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  //====================================================
+  // Delete Message
+  //====================================================
+  //
+  // Instead of hard-deleting the document (which would need every
+  // message to carry its own doc id around and would lose the fact
+  // that "something" was there), we mark the message as deleted and
+  // keep a flag for who deleted it. The message bubble is then shown
+  // as a small "This message was deleted" / "This message was deleted
+  // by creator" placeholder to everyone in the chat.
+
+  Future<void> deleteMessage(
+    String messageId, {
+    required bool deletedByCreator,
+  }) async {
+    await _firestore
+        .collection("groups")
+        .doc(widget.groupId)
+        .collection("messages")
+        .doc(messageId)
+        .update({
+      "deleted": true,
+      "deletedByCreator": deletedByCreator,
+      "text": "",
+    });
+  }
+
+  void confirmDeleteMessage(
+    String messageId, {
+    required bool deletedByCreator,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text("Delete Message"),
+          content: const Text(
+            "This message will be deleted for everyone. Are you sure?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                "Cancel",
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await deleteMessage(
+                  messageId,
+                  deletedByCreator: deletedByCreator,
+                );
+              },
+              child: const Text(
+                "Delete",
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   //====================================================
@@ -752,10 +936,18 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               scrollable: true,
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
-              title: const Text("Make Announcement"),
+              title: const Text(
+                "Make Announcement",
+                style: TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
@@ -765,9 +957,24 @@ class _ChatScreenState extends State<ChatScreen> {
                       controller: announcementController,
                       maxLines: 4,
                       autofocus: true,
-                      decoration: const InputDecoration(
+                      style: const TextStyle(color: Colors.black),
+                      cursorColor: Colors.black,
+                      decoration: InputDecoration(
                         hintText: "Type an announcement",
-                        border: OutlineInputBorder(),
+                        hintStyle: TextStyle(
+                          color: Colors.grey.shade600,
+                        ),
+                        border: const OutlineInputBorder(),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(
+                            color: Colors.grey.shade400,
+                          ),
+                        ),
+                        focusedBorder: const OutlineInputBorder(
+                          borderSide: BorderSide(
+                            color: Colors.black,
+                          ),
+                        ),
                       ),
                     ),
 
@@ -793,75 +1000,123 @@ class _ChatScreenState extends State<ChatScreen> {
                       constraints: const BoxConstraints(
                         maxHeight: 240,
                       ),
-                      child: StreamBuilder<
-                          QuerySnapshot<Map<String, dynamic>>>(
-                        stream: _firestore
-                            .collection("groups")
-                            .where(
-                              "createdBy",
-                              isEqualTo: phoneNumber,
-                            )
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(
-                                vertical: 20,
-                              ),
-                              child: Center(
-                                child:
-                                    CircularProgressIndicator(),
-                              ),
-                            );
-                          }
+                      child: Builder(
+                        builder: (context) {
+                          final formats =
+                              possibleCreatorPhoneFormats;
 
-                          final groups = snapshot.data!.docs;
-
-                          if (groups.isEmpty) {
+                          if (formats.isEmpty) {
                             return const Padding(
                               padding: EdgeInsets.symmetric(
                                 vertical: 20,
                               ),
                               child: Text(
-                                "No groups found",
+                                "Could not read your phone number. Please re-login and try again.",
+                                textAlign: TextAlign.center,
                                 style:
                                     TextStyle(color: Colors.grey),
                               ),
                             );
                           }
 
-                          return ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: groups.length,
-                            itemBuilder: (context, index) {
-                              final doc = groups[index];
-                              final data = doc.data();
+                          return StreamBuilder<
+                              QuerySnapshot<Map<String, dynamic>>>(
+                            stream: _firestore
+                                .collection("groups")
+                                .where(
+                                  "createdBy",
+                                  whereIn: formats,
+                                )
+                                .snapshots(),
+                            builder: (context, snapshot) {
+                              if (snapshot.hasError) {
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(
+                                    vertical: 20,
+                                  ),
+                                  child: Text(
+                                    "Couldn't load your groups.\n${snapshot.error}",
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                );
+                              }
 
-                              final name = data["groupName"] ??
-                                  data["name"] ??
-                                  "Untitled (${doc.id})";
+                              if (!snapshot.hasData) {
+                                return const Padding(
+                                  padding:
+                                      EdgeInsets.symmetric(
+                                    vertical: 20,
+                                  ),
+                                  child: Center(
+                                    child:
+                                        CircularProgressIndicator(),
+                                  ),
+                                );
+                              }
 
-                              final checked = selectedGroupIds
-                                  .contains(doc.id);
+                              final groups = snapshot.data!.docs;
 
-                              return CheckboxListTile(
-                                dense: true,
-                                controlAffinity:
-                                    ListTileControlAffinity
-                                        .leading,
-                                activeColor: Colors.black,
-                                value: checked,
-                                title: Text(name),
-                                onChanged: (value) {
-                                  setDialogState(() {
-                                    if (value == true) {
+                              if (groups.isEmpty) {
+                                return const Padding(
+                                  padding:
+                                      EdgeInsets.symmetric(
+                                    vertical: 20,
+                                  ),
+                                  child: Text(
+                                    "No groups found",
+                                    style: TextStyle(
+                                        color: Colors.grey),
+                                  ),
+                                );
+                              }
+
+                              return ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: groups.length,
+                                itemBuilder: (context, index) {
+                                  final doc = groups[index];
+                                  final data = doc.data();
+
+                                  final name =
+                                      data["groupName"] ??
+                                          data["name"] ??
+                                          "Untitled (${doc.id})";
+
+                                  final checked =
                                       selectedGroupIds
-                                          .add(doc.id);
-                                    } else {
-                                      selectedGroupIds
-                                          .remove(doc.id);
-                                    }
-                                  });
+                                          .contains(doc.id);
+
+                                  return CheckboxListTile(
+                                    dense: true,
+                                    controlAffinity:
+                                        ListTileControlAffinity
+                                            .leading,
+                                    activeColor: Colors.black,
+                                    checkColor: Colors.white,
+                                    value: checked,
+                                    title: Text(
+                                      name,
+                                      style: const TextStyle(
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                    onChanged: (value) {
+                                      setDialogState(() {
+                                        if (value == true) {
+                                          selectedGroupIds
+                                              .add(doc.id);
+                                        } else {
+                                          selectedGroupIds
+                                              .remove(doc.id);
+                                        }
+                                      });
+                                    },
+                                  );
                                 },
                               );
                             },
@@ -1683,7 +1938,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           messages.length,
                       itemBuilder:
                           (context, index) {
-                                                    final msg = messages[index].data();
+                                                    final msgDoc = messages[index];
+                        final msg = msgDoc.data();
 
                         // Announcement banner ----------------------
                         if (msg["type"] == "announcement") {
@@ -1761,6 +2017,68 @@ class _ChatScreenState extends State<ChatScreen> {
                         final bool isMe =
                             msg["sender"] == phoneNumber;
 
+                        // Deleted message placeholder ----------------
+                        if (msg["deleted"] == true) {
+                          final bool deletedByCreator =
+                              msg["deletedByCreator"] == true;
+
+                          return Padding(
+                            padding:
+                                const EdgeInsets.symmetric(
+                              vertical: 5,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: isMe
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding:
+                                      const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                            14),
+                                    border: Border.all(
+                                      color:
+                                          Colors.grey.shade300,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize:
+                                        MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.block,
+                                        size: 14,
+                                        color:
+                                            Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        deletedByCreator
+                                            ? "This message was deleted by creator"
+                                            : "This message was deleted",
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontStyle:
+                                              FontStyle.italic,
+                                          color: Colors
+                                              .grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
                         return FutureBuilder<
                             Map<String, dynamic>>(
                           future: getUser(
@@ -1818,110 +2136,232 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ),
 
                                   Flexible(
-                                    child: Container(
-                                      constraints:
-                                          const BoxConstraints(
-                                        maxWidth: 280,
+                                    child: GestureDetector(
+                                      onLongPress: () =>
+                                          showMessageActions(
+                                        messageId: msgDoc.id,
+                                        message: msg,
+                                        isMe: isMe,
+                                        isCreator: isCreator,
                                       ),
-                                      padding:
-                                          const EdgeInsets.all(
-                                              12),
-                                      decoration:
-                                          BoxDecoration(
-                                        color: isMe
-                                            ? Colors.black
-                                            : Colors.grey
-                                                .shade200,
-                                        borderRadius:
-                                            BorderRadius.only(
-                                          topLeft:
-                                              const Radius
-                                                  .circular(
-                                                  18),
-                                          topRight:
-                                              const Radius
-                                                  .circular(
-                                                  18),
-                                          bottomLeft:
-                                              Radius.circular(
-                                                  isMe
-                                                      ? 18
-                                                      : 5),
-                                          bottomRight:
-                                              Radius.circular(
-                                                  isMe
-                                                      ? 5
-                                                      : 18),
+                                      child: Container(
+                                        constraints:
+                                            const BoxConstraints(
+                                          maxWidth: 280,
                                         ),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment
-                                                .start,
-                                        children: [
-
-                                          Text(
-                                            username,
-                                            style:
-                                                TextStyle(
-                                              fontWeight:
-                                                  FontWeight
-                                                      .bold,
-                                              fontSize:
-                                                  13,
-                                              color: isMe
-                                                  ? Colors
-                                                      .white70
-                                                  : Colors
-                                                      .blue,
-                                            ),
+                                        padding:
+                                            const EdgeInsets.all(
+                                                12),
+                                        decoration:
+                                            BoxDecoration(
+                                          color: isMe
+                                              ? Colors.black
+                                              : Colors.grey
+                                                  .shade200,
+                                          borderRadius:
+                                              BorderRadius.only(
+                                            topLeft:
+                                                const Radius
+                                                    .circular(
+                                                    18),
+                                            topRight:
+                                                const Radius
+                                                    .circular(
+                                                    18),
+                                            bottomLeft:
+                                                Radius.circular(
+                                                    isMe
+                                                        ? 18
+                                                        : 5),
+                                            bottomRight:
+                                                Radius.circular(
+                                                    isMe
+                                                        ? 5
+                                                        : 18),
                                           ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment
+                                                  .start,
+                                          children: [
 
-                                          const SizedBox(
-                                            height: 5,
-                                          ),
+                                            if ((msg["replyToText"] ??
+                                                    "")
+                                                .toString()
+                                                .isNotEmpty)
+                                              FutureBuilder<
+                                                  Map<String,
+                                                      dynamic>>(
+                                                future: getUser(
+                                                  msg["replyToSender"] ??
+                                                      "",
+                                                ),
+                                                builder: (context,
+                                                    replySnap) {
+                                                  final replyUser =
+                                                      replySnap
+                                                              .data ??
+                                                          {};
 
-                                          Text(
-                                            msg["text"] ??
-                                                "",
-                                            style:
-                                                TextStyle(
-                                              fontSize:
-                                                  16,
-                                              color: isMe
-                                                  ? Colors
-                                                      .white
-                                                  : Colors
-                                                      .black,
-                                            ),
-                                          ),
+                                                  final replyName =
+                                                      msg["replyToSender"] ==
+                                                              phoneNumber
+                                                          ? "You"
+                                                          : (replyUser[
+                                                                  "username"] ??
+                                                              replyUser[
+                                                                  "name"] ??
+                                                              "User");
 
-                                          const SizedBox(
-                                            height: 8,
-                                          ),
-
-                                          Align(
-                                            alignment:
-                                                Alignment
-                                                    .bottomRight,
-                                            child: Text(
-                                              formatTime(
-                                                msg["time"]
-                                                    as Timestamp?,
+                                                  return Container(
+                                                    margin:
+                                                        const EdgeInsets
+                                                            .only(
+                                                      bottom: 6,
+                                                    ),
+                                                    padding:
+                                                        const EdgeInsets
+                                                            .symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 6,
+                                                    ),
+                                                    decoration:
+                                                        BoxDecoration(
+                                                      color: isMe
+                                                          ? Colors
+                                                              .white24
+                                                          : Colors
+                                                              .black
+                                                              .withOpacity(
+                                                                  0.06),
+                                                      borderRadius:
+                                                          BorderRadius
+                                                              .circular(
+                                                                  8),
+                                                      border: Border(
+                                                        left:
+                                                            BorderSide(
+                                                          color: isMe
+                                                              ? Colors
+                                                                  .white70
+                                                              : Colors
+                                                                  .blue,
+                                                          width: 3,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          replyName,
+                                                          style:
+                                                              TextStyle(
+                                                            fontSize:
+                                                                11,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .bold,
+                                                            color: isMe
+                                                                ? Colors
+                                                                    .white70
+                                                                : Colors
+                                                                    .blue,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 2,
+                                                        ),
+                                                        Text(
+                                                          msg["replyToText"] ??
+                                                              "",
+                                                          maxLines: 2,
+                                                          overflow:
+                                                              TextOverflow
+                                                                  .ellipsis,
+                                                          style:
+                                                              TextStyle(
+                                                            fontSize:
+                                                                12,
+                                                            color: isMe
+                                                                ? Colors
+                                                                    .white70
+                                                                : Colors
+                                                                    .black54,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                },
                                               ),
+
+                                            Text(
+                                              username,
+                                              style:
+                                                  TextStyle(
+                                                fontWeight:
+                                                    FontWeight
+                                                        .bold,
+                                                fontSize:
+                                                    13,
+                                                color: isMe
+                                                    ? Colors
+                                                        .white70
+                                                    : Colors
+                                                        .blue,
+                                              ),
+                                            ),
+
+                                            const SizedBox(
+                                              height: 5,
+                                            ),
+
+                                            Text(
+                                              msg["text"] ??
+                                                  "",
                                               style:
                                                   TextStyle(
                                                 fontSize:
-                                                    11,
+                                                    16,
                                                 color: isMe
                                                     ? Colors
-                                                        .white60
+                                                        .white
                                                     : Colors
-                                                        .grey,
+                                                        .black,
                                               ),
                                             ),
-                                          ),
-                                        ],
+
+                                            const SizedBox(
+                                              height: 8,
+                                            ),
+
+                                            Align(
+                                              alignment:
+                                                  Alignment
+                                                      .bottomRight,
+                                              child: Text(
+                                                formatTime(
+                                                  msg["time"]
+                                                      as Timestamp?,
+                                                ),
+                                                style:
+                                                    TextStyle(
+                                                  fontSize:
+                                                      11,
+                                                  color: isMe
+                                                      ? Colors
+                                                          .white60
+                                                      : Colors
+                                                          .grey,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1958,6 +2398,76 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
               ),
+                            //====================================
+              // REPLY PREVIEW
+              //====================================
+
+              if (_replyingToId != null && _replyingToMessage != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  color: Colors.grey.shade100,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 3,
+                        height: 36,
+                        color: Colors.blue,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FutureBuilder<
+                            Map<String, dynamic>>(
+                          future: getUser(
+                            _replyingToMessage!["sender"] ?? "",
+                          ),
+                          builder: (context, snap) {
+                            final u = snap.data ?? {};
+
+                            final name = _replyingToMessage![
+                                        "sender"] ==
+                                    phoneNumber
+                                ? "You"
+                                : (u["username"] ??
+                                    u["name"] ??
+                                    "User");
+
+                            return Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Replying to $name",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Text(
+                                  _replyingToMessage!["text"] ??
+                                      "",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: cancelReply,
+                      ),
+                    ],
+                  ),
+                ),
+
                             //====================================
               // MESSAGE INPUT
               //====================================
