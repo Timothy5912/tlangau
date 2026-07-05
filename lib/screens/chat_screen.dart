@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 // If you add the `share_plus` package to pubspec.yaml you can uncomment
 // this import and use Share.share(...) inside shareGroupLink() below to
@@ -207,48 +209,69 @@ class _ChatScreenState extends State<ChatScreen> {
   //====================================================
 
   Future<void> sendMessage() async {
-    final text = messageController.text.trim();
+  final text = messageController.text.trim();
 
-    if (text.isEmpty) return;
+  if (text.isEmpty) return;
 
-    final Map<String, dynamic> data = {
-      "text": text,
-      "sender": phoneNumber,
-      "time": FieldValue.serverTimestamp(),
-    };
+  final Map<String, dynamic> data = {
+    "text": text,
+    "sender": phoneNumber,
+    "time": FieldValue.serverTimestamp(),
+  };
 
-    if (_replyingToId != null && _replyingToMessage != null) {
-      data["replyToId"] = _replyingToId;
-      data["replyToSender"] = _replyingToMessage!["sender"];
-      data["replyToText"] = _replyingToMessage!["text"] ?? "";
-    }
-
-    await _firestore
-        .collection("groups")
-        .doc(widget.groupId)
-        .collection("messages")
-        .add(data);
-
-    await _firestore
-        .collection("groups")
-        .doc(widget.groupId)
-        .update({
-      "lastMessage": text,
-      "lastMessageTime":
-          FieldValue.serverTimestamp(),
-    });
-
-    messageController.clear();
-
-    setTyping(false);
-
-    cancelReply();
-
-    if (mounted) {
-      setState(() {});
-    }
+  if (_replyingToId != null && _replyingToMessage != null) {
+    data["replyToId"] = _replyingToId;
+    data["replyToSender"] = _replyingToMessage!["sender"];
+    data["replyToText"] = _replyingToMessage!["text"] ?? "";
   }
 
+  await _firestore
+      .collection("groups")
+      .doc(widget.groupId)
+      .collection("messages")
+      .add(data);
+
+  await _firestore
+      .collection("groups")
+      .doc(widget.groupId)
+      .update({
+    "lastMessage": text,
+    "lastMessageTime": FieldValue.serverTimestamp(),
+  });
+
+  // Notify other group members
+  try {
+    final response = await http.post(
+      Uri.parse("https://tlangau-notify.tlangau.workers.dev"),
+      headers: {
+        "Content-Type": "application/json",
+        "x-app-secret": "Tlangau_2026_Notify_8P#x4Lm!Q9vR2zK",
+      },
+      body: jsonEncode({
+        "groupId": widget.groupId,
+        "senderPhone": phoneNumber,
+        "text": text,
+        "type": "message",
+      }),
+    );
+
+    debugPrint(
+      "Worker Response: ${response.statusCode} ${response.body}",
+    );
+  } catch (e) {
+    debugPrint("Notification Error: $e");
+  }
+
+  messageController.clear();
+
+  setTyping(false);
+
+  cancelReply();
+
+  if (mounted) {
+    setState(() {});
+  }
+}
   //====================================================
   // Message Actions (Reply / Delete)
   //====================================================
