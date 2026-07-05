@@ -196,29 +196,42 @@ class _ChatScreenState extends State<ChatScreen> {
   // Creator Functions — Announcements
   //====================================================
 
-  Future<void> sendAnnouncement(String text) async {
+  Future<void> sendAnnouncementToGroups(
+      String text, List<String> groupIds) async {
     final trimmed = text.trim();
 
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty || groupIds.isEmpty) return;
 
-    await _firestore
-        .collection("groups")
-        .doc(widget.groupId)
-        .collection("messages")
-        .add({
-      "text": trimmed,
-      "sender": phoneNumber,
-      "time": FieldValue.serverTimestamp(),
-      "type": "announcement",
-    });
+    final batch = _firestore.batch();
 
-    await _firestore
-        .collection("groups")
-        .doc(widget.groupId)
-        .update({
-      "lastMessage": "📢 $trimmed",
-      "lastMessageTime": FieldValue.serverTimestamp(),
-    });
+    for (final gid in groupIds) {
+      final groupRef = _firestore.collection("groups").doc(gid);
+      final messageRef = groupRef.collection("messages").doc();
+
+      batch.set(messageRef, {
+        "text": trimmed,
+        "sender": phoneNumber,
+        "time": FieldValue.serverTimestamp(),
+        "type": "announcement",
+      });
+
+      batch.update(groupRef, {
+        "lastMessage": "📢 $trimmed",
+        "lastMessageTime": FieldValue.serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Announcement sent to ${groupIds.length} group${groupIds.length == 1 ? '' : 's'}",
+          ),
+        ),
+      );
+    }
   }
 
   //====================================================
@@ -274,7 +287,7 @@ class _ChatScreenState extends State<ChatScreen> {
         .collection("groups")
         .doc(widget.groupId)
         .update({
-      "name": name,
+      "groupName": name,
       "description": description,
       "isPrivate": isPrivate,
     });
@@ -531,7 +544,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void openManageGroup(Map<String, dynamic> group) {
     final nameController = TextEditingController(
-      text: group["name"] ?? widget.groupName,
+      text: group["groupName"] ?? widget.groupName,
     );
     final descController = TextEditingController(
       text: group["description"] ?? "",
@@ -643,6 +656,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    openMakeAnnouncement();
+                  },
+                  child: const Text(
+                    "Make Announcement",
+                    style: TextStyle(color: Color(0xFFB8860B)),
+                  ),
+                ),
+                TextButton(
                   onPressed: () async {
                     Navigator.pop(context);
 
@@ -719,52 +742,173 @@ class _ChatScreenState extends State<ChatScreen> {
   void openMakeAnnouncement() {
     final announcementController = TextEditingController();
 
+    // Pre-select the group the user is currently in.
+    final Set<String> selectedGroupIds = {widget.groupId};
+
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text("Make Announcement"),
-          content: TextField(
-            controller: announcementController,
-            maxLines: 4,
-            autofocus: true,
-            decoration: const InputDecoration(
-              hintText: "Type an announcement for the group",
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text(
-                "Cancel",
-                style: TextStyle(color: Colors.grey),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              scrollable: true,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
+              title: const Text("Make Announcement"),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: announcementController,
+                      maxLines: 4,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: "Type an announcement",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        "Send to",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // List of groups the user created — pick any
+                    // combination to broadcast this announcement to.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: 240,
+                      ),
+                      child: StreamBuilder<
+                          QuerySnapshot<Map<String, dynamic>>>(
+                        stream: _firestore
+                            .collection("groups")
+                            .where(
+                              "createdBy",
+                              isEqualTo: phoneNumber,
+                            )
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(
+                                vertical: 20,
+                              ),
+                              child: Center(
+                                child:
+                                    CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+
+                          final groups = snapshot.data!.docs;
+
+                          if (groups.isEmpty) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(
+                                vertical: 20,
+                              ),
+                              child: Text(
+                                "No groups found",
+                                style:
+                                    TextStyle(color: Colors.grey),
+                              ),
+                            );
+                          }
+
+                          return ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: groups.length,
+                            itemBuilder: (context, index) {
+                              final doc = groups[index];
+                              final data = doc.data();
+
+                              final name = data["groupName"] ??
+                                  data["name"] ??
+                                  "Untitled (${doc.id})";
+
+                              final checked = selectedGroupIds
+                                  .contains(doc.id);
+
+                              return CheckboxListTile(
+                                dense: true,
+                                controlAffinity:
+                                    ListTileControlAffinity
+                                        .leading,
+                                activeColor: Colors.black,
+                                value: checked,
+                                title: Text(name),
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    if (value == true) {
+                                      selectedGroupIds
+                                          .add(doc.id);
+                                    } else {
+                                      selectedGroupIds
+                                          .remove(doc.id);
+                                    }
+                                  });
+                                },
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              onPressed: () async {
-                final text = announcementController.text.trim();
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  child: const Text(
+                    "Cancel",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                  ),
+                  onPressed: () async {
+                    final text = announcementController.text.trim();
 
-                if (text.isEmpty) return;
+                    if (text.isEmpty ||
+                        selectedGroupIds.isEmpty) {
+                      return;
+                    }
 
-                Navigator.pop(context);
+                    Navigator.pop(context);
 
-                await sendAnnouncement(text);
-              },
-              child: const Text(
-                "Post",
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
+                    await sendAnnouncementToGroups(
+                      text,
+                      selectedGroupIds.toList(),
+                    );
+                  },
+                  child: const Text(
+                    "Post",
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -775,7 +919,7 @@ class _ChatScreenState extends State<ChatScreen> {
   //====================================================
 
   void openGroupInfo(Map<String, dynamic> group) {
-    final name = group["name"] ?? widget.groupName;
+    final name = group["groupName"] ?? widget.groupName;
     final description = group["description"] ?? "";
     final bool isPrivate = group["isPrivate"] ?? false;
 
@@ -1315,7 +1459,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
 
                 Text(
-                  group["name"] ?? widget.groupName,
+                  widget.groupName,
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
@@ -1871,7 +2015,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     hintText:
                                         "Type a message",
                                     border:
-                                    InputBorder.none,
+                                        InputBorder.none,
                                   ),
                                 ),
                               ),

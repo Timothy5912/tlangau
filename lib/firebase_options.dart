@@ -23,10 +23,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       case TargetPlatform.macOS:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for macos - '
@@ -56,6 +53,7 @@ class DefaultFirebaseOptions {
     projectId: 'tlangau',
     authDomain: 'tlangau.firebaseapp.com',
     storageBucket: 'tlangau.firebasestorage.app',
+    measurementId: 'G-BFHSQZCTRY',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
@@ -64,5 +62,13 @@ class DefaultFirebaseOptions {
     messagingSenderId: '339661535820',
     projectId: 'tlangau',
     storageBucket: 'tlangau.firebasestorage.app',
+  );
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyAWI5J-4oUN4g50vbPiD2ZSqN9Bv-FjGMA',
+    appId: '1:339661535820:ios:fd2fe9e534ed71b16b92e9',
+    messagingSenderId: '339661535820',
+    projectId: 'tlangau',
+    storageBucket: 'tlangau.firebasestorage.app',
+    iosBundleId: 'com.example.tlangau',
   );
 }
